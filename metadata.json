@@ -1,0 +1,7 @@
+{
+  "name": "AON GALAPA - Dashboard Inteligente",
+  "description": "Plataforma ejecutiva de seguimiento operativo y control de Check List de flota para AON Galapa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
