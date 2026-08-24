@@ -8,7 +8,6 @@ import {
   AlertCircle,
   Truck,
   CheckCircle2,
-  KeyRound,
   Eye,
   EyeOff
 } from 'lucide-react';
@@ -30,12 +29,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     setError(null);
     setIsLoading(true);
 
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
     try {
       // First attempt backend server authentication
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password })
+        body: JSON.stringify({ email: cleanEmail, password: cleanPassword })
       });
 
       const data = await response.json();
@@ -49,53 +51,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      // Client-side fallback check if offline or network error
-      const normalizedEmail = email.trim().toLowerCase();
-      if (normalizedEmail === 'cristian.colpas@logisticos.co' && password === 'Logisticos2026') {
-        const session: UserSession = {
-          id: 'admin-01',
-          email: 'cristian.colpas@logisticos.co',
-          name: 'Cristian Colpas',
-          role: 'Administrador & Creador',
-          company: 'AON GALAPA / Logisticos.co',
-          permissions: [
-            'admin',
-            'creator',
-            'full_access',
-            'module_config',
-            'view_all_kpis',
-            'view_all_data',
-            'manage_dashboard'
-          ],
-          authenticatedAt: new Date().toISOString()
-        };
-        onLoginSuccess(session);
+      // Client-side fallback check
+      if (checkClientCredentials(cleanEmail, cleanPassword)) {
         return;
       }
 
       setError(data.message || 'Usuario o contraseña incorrectos. Verifique sus credenciales.');
     } catch {
-      // Fallback
-      const normalizedEmail = email.trim().toLowerCase();
-      if (normalizedEmail === 'cristian.colpas@logisticos.co' && password === 'Logisticos2026') {
-        const session: UserSession = {
-          id: 'admin-01',
-          email: 'cristian.colpas@logisticos.co',
-          name: 'Cristian Colpas',
-          role: 'Administrador & Creador',
-          company: 'AON GALAPA / Logisticos.co',
-          permissions: [
-            'admin',
-            'creator',
-            'full_access',
-            'module_config',
-            'view_all_kpis',
-            'view_all_data',
-            'manage_dashboard'
-          ],
-          authenticatedAt: new Date().toISOString()
-        };
-        onLoginSuccess(session);
+      // Fallback in case backend is unreachable
+      if (checkClientCredentials(cleanEmail, cleanPassword)) {
         return;
       }
       setError('Error al procesar el inicio de sesión. Verifique sus credenciales.');
@@ -104,10 +68,89 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleQuickAdmin = () => {
-    setEmail('cristian.colpas@logisticos.co');
-    setPassword('Logisticos2026');
-    setError(null);
+  const checkClientCredentials = (cleanEmail: string, cleanPassword: string): boolean => {
+    // 1. Administrador General
+    if (
+      cleanEmail === 'administraciongalapa@logisticos.co' &&
+      (cleanPassword === 'Superman10.' || cleanPassword === 'Superman10')
+    ) {
+      const session: UserSession = {
+        id: 'admin-galapa',
+        email: 'administraciongalapa@logisticos.co',
+        name: 'Administración AON Galapa',
+        role: 'Administrador General',
+        company: 'AON GALAPA / Logisticos.co',
+        permissions: [
+          'admin',
+          'creator',
+          'full_access',
+          'module_config',
+          'view_all_kpis',
+          'view_all_data',
+          'manage_dashboard',
+          'manage_users',
+          'export_reports',
+          'system_settings'
+        ],
+        authenticatedAt: new Date().toISOString()
+      };
+      onLoginSuccess(session);
+      return true;
+    }
+
+    // 2. Control de Flota - Cristian Colpas
+    if (
+      cleanEmail === 'cristian.colpas@logisticos.co' &&
+      (cleanPassword === 'Superman10.' || cleanPassword === 'Logisticos2026' || cleanPassword === 'Flota2026.' || cleanPassword === 'Flota2026')
+    ) {
+      const session: UserSession = {
+        id: 'flota-01',
+        email: 'cristian.colpas@logisticos.co',
+        name: 'Cristian Colpas',
+        role: 'Control Operativo de Flota',
+        company: 'AON GALAPA / Logisticos.co',
+        permissions: [
+          'fleet_control',
+          'view_all_kpis',
+          'view_all_data',
+          'view_salida',
+          'view_retorno',
+          'view_alerts',
+          'export_reports'
+        ],
+        authenticatedAt: new Date().toISOString()
+      };
+      onLoginSuccess(session);
+      return true;
+    }
+
+    // 3. Control de Flota - Leonardo Rodríguez
+    if (
+      cleanEmail === 'leonardo.rodriguez@logisticos.co' &&
+      (cleanPassword === 'Superman10.' || cleanPassword === 'Logisticos2026' || cleanPassword === 'Flota2026.' || cleanPassword === 'Flota2026')
+    ) {
+      const session: UserSession = {
+        id: 'flota-02',
+        email: 'leonardo.rodriguez@logisticos.co',
+        name: 'Leonardo Rodríguez',
+        role: 'Control Operativo de Flota',
+        company: 'AON GALAPA / Logisticos.co',
+        permissions: [
+          'fleet_control',
+          'view_all_kpis',
+          'view_all_data',
+          'view_salida',
+          'view_retorno',
+          'view_alerts',
+          'export_reports'
+        ],
+        authenticatedAt: new Date().toISOString()
+      };
+      onLoginSuccess(session);
+      return true;
+    }
+
+    return false;
   };
 
   return (
@@ -121,7 +164,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4 }}
-        className="w-full max-w-md bg-slate-900/90 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-10"
+        className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-10"
         id="login-card-container"
       >
         {/* Card Header */}
@@ -136,8 +179,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             Plataforma Integral de Control Operativo y Flota
           </p>
           <div className="mt-3 flex items-center justify-center gap-1.5 text-xs text-slate-400">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Módulo de Control de Check List</span>
+            <Shield className="w-3.5 h-3.5 text-emerald-400" />
+            <span>Acceso Seguro Restringido</span>
           </div>
         </div>
 
@@ -158,10 +201,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </motion.div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4" id="login-form">
+          <form onSubmit={handleSubmit} className="space-y-4" id="login-form" autoComplete="off">
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                Usuario / Correo Electrónico
+                Usuario / Correo Corporativo
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -171,9 +214,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   id="login-email-input"
                   type="email"
                   required
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="cristian.colpas@logisticos.co"
+                  placeholder="nombre.apellido@logisticos.co"
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
               </div>
@@ -191,6 +237,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   id="login-password-input"
                   type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="new-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
@@ -201,6 +248,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition-colors"
                   id="toggle-password-visibility-btn"
+                  tabIndex={-1}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -224,30 +272,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </button>
           </form>
 
-          {/* Quick Access Helper for demo & testing convenience */}
-          <div className="mt-6 pt-5 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={handleQuickAdmin}
-              className="w-full py-2.5 px-3 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 rounded-xl text-xs text-slate-300 hover:text-white flex items-center justify-between transition-colors group"
-              id="quick-fill-admin-btn"
-            >
-              <div className="flex items-center gap-2">
-                <KeyRound className="w-3.5 h-3.5 text-blue-400" />
-                <span>Cargar Credenciales Administrador</span>
-              </div>
-              <span className="text-[10px] text-blue-400 group-hover:underline">Auto-rellenar</span>
-            </button>
-          </div>
-
-          {/* Admin Role Privileges Note */}
-          <div className="mt-5 p-3 rounded-xl bg-slate-950/60 border border-slate-800/60 text-[11px] text-slate-400 space-y-1.5">
-            <div className="flex items-center gap-1.5 font-medium text-slate-300">
-              <Shield className="w-3.5 h-3.5 text-blue-400" />
-              <span>Perfil Autorizado: Cristian Colpas</span>
-            </div>
-            <p className="text-slate-400 leading-relaxed">
-              Permisos de Administrador, Creador, Acceso Total a Flota y Gestión de Indicadores en AON Galapa.
+          {/* Security Notice */}
+          <div className="mt-6 pt-5 border-t border-slate-800 text-center">
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              Por políticas de seguridad y confidencialidad, las credenciales no son almacenadas automáticamente. Ingrese su correo corporativo y contraseña autorizada.
             </p>
           </div>
         </div>
@@ -267,3 +295,4 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     </div>
   );
 };
+

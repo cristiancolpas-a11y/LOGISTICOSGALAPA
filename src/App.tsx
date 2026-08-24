@@ -44,10 +44,13 @@ const SESSION_STORAGE_KEY = 'aon_galapa_session_v1';
 const DIRECT_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk/gviz/tq?tqx=out:csv&sheet=Check%20list`;
 
 export default function App() {
-  // 1. Authentication State
+  // 1. Authentication State (Strict Session-Only: Not remembered across browser restart)
   const [userSession, setUserSession] = useState<UserSession | null>(() => {
     try {
-      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      // Clear any legacy localStorage to ensure strict security
+      localStorage.removeItem(SESSION_STORAGE_KEY);
+      
+      const saved = sessionStorage.getItem(SESSION_STORAGE_KEY);
       if (saved) {
         return JSON.parse(saved);
       }
@@ -194,7 +197,7 @@ export default function App() {
   const handleLoginSuccess = (session: UserSession) => {
     setUserSession(session);
     try {
-      localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
     } catch (e) {
       console.error('Failed to persist session', e);
     }
@@ -204,6 +207,7 @@ export default function App() {
   const handleLogout = () => {
     setUserSession(null);
     try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
       localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch (e) {
       console.error('Failed to clear session', e);

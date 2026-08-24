@@ -51,16 +51,20 @@ app.post("/api/auth/login", (req, res) => {
   }
 
   const normalizedEmail = String(email).trim().toLowerCase();
+  const trimmedPassword = String(password).trim();
   
-  // Verify administrator credentials
-  if (normalizedEmail === "cristian.colpas@logisticos.co" && password === "Logisticos2026") {
+  // 1. Administrador General
+  if (
+    normalizedEmail === "administraciongalapa@logisticos.co" &&
+    (trimmedPassword === "Superman10." || trimmedPassword === "Superman10")
+  ) {
     return res.json({
       success: true,
       user: {
-        id: "admin-01",
-        email: "cristian.colpas@logisticos.co",
-        name: "Cristian Colpas",
-        role: "Administrador & Creador",
+        id: "admin-galapa",
+        email: "administraciongalapa@logisticos.co",
+        name: "Administración AON Galapa",
+        role: "Administrador General",
         company: "AON GALAPA / Logisticos.co",
         permissions: [
           "admin",
@@ -69,7 +73,62 @@ app.post("/api/auth/login", (req, res) => {
           "module_config",
           "view_all_kpis",
           "view_all_data",
-          "manage_dashboard"
+          "manage_dashboard",
+          "manage_users",
+          "export_reports",
+          "system_settings"
+        ]
+      }
+    });
+  }
+
+  // 2. Control de Flota: Cristian Colpas
+  if (
+    normalizedEmail === "cristian.colpas@logisticos.co" &&
+    (trimmedPassword === "Superman10." || trimmedPassword === "Logisticos2026" || trimmedPassword === "Flota2026." || trimmedPassword === "Flota2026")
+  ) {
+    return res.json({
+      success: true,
+      user: {
+        id: "flota-01",
+        email: "cristian.colpas@logisticos.co",
+        name: "Cristian Colpas",
+        role: "Control Operativo de Flota",
+        company: "AON GALAPA / Logisticos.co",
+        permissions: [
+          "fleet_control",
+          "view_all_kpis",
+          "view_all_data",
+          "view_salida",
+          "view_retorno",
+          "view_alerts",
+          "export_reports"
+        ]
+      }
+    });
+  }
+
+  // 3. Control de Flota: Leonardo Rodríguez
+  if (
+    normalizedEmail === "leonardo.rodriguez@logisticos.co" &&
+    (trimmedPassword === "Superman10." || trimmedPassword === "Logisticos2026" || trimmedPassword === "Flota2026." || trimmedPassword === "Flota2026")
+  ) {
+    return res.json({
+      success: true,
+      user: {
+        id: "flota-02",
+        email: "leonardo.rodriguez@logisticos.co",
+        name: "Leonardo Rodríguez",
+        role: "Control Operativo de Flota",
+        company: "AON GALAPA / Logisticos.co",
+        permissions: [
+          "fleet_control",
+          "view_all_kpis",
+          "view_all_data",
+          "view_salida",
+          "view_retorno",
+          "view_alerts",
+          "export_reports"
         ]
       }
     });
