@@ -36,6 +36,35 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   totalAllRecords
 }) => {
   const [isExpanded, setIsExpanded] = React.useState(true);
+  const [localSearch, setLocalSearch] = React.useState(filters.searchQuery);
+  const filtersRef = React.useRef(filters);
+  const onFilterChangeRef = React.useRef(onFilterChange);
+
+  React.useEffect(() => {
+    filtersRef.current = filters;
+    onFilterChangeRef.current = onFilterChange;
+  });
+
+  // Sync when external reset or filter change modifies searchQuery
+  React.useEffect(() => {
+    setLocalSearch(filters.searchQuery);
+  }, [filters.searchQuery]);
+
+  // Debounce search by 300ms
+  React.useEffect(() => {
+    const handler = setTimeout(() => {
+      if (localSearch !== filtersRef.current.searchQuery) {
+        onFilterChangeRef.current({
+          ...filtersRef.current,
+          searchQuery: localSearch
+        });
+      }
+    }, 300);
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [localSearch]);
 
   const handlePresetDate = (preset: FilterState['presetRange']) => {
     let start = '';
@@ -397,8 +426,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
               <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-500" />
               <input
                 type="text"
-                value={filters.searchQuery}
-                onChange={(e) => onFilterChange({ ...filters, searchQuery: e.target.value })}
+                value={localSearch}
+                onChange={(e) => setLocalSearch(e.target.value)}
                 placeholder="Buscar por placa ej. COJTX917, conductor..."
                 className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-9 pr-3 py-1.5 text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
               />

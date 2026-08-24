@@ -72,9 +72,14 @@ export function parseCheckListCsv(csvText: string): NormalizedCheckListRecord[] 
 
     const rawContratista = String(row.CONTRATISTA || row.contratista || row.Contratista || 'Logisticos.co').trim();
     const contratista = rawContratista && rawContratista !== '#N/A' ? rawContratista : 'Logisticos.co';
+    const contratistaLower = contratista.toLowerCase();
 
     const rawConductor = String(row.CONDUCTOR || row.conductor || row.Conductor || 'SIN DATOS').trim();
     const conductor = rawConductor && rawConductor !== '#N/A' && rawConductor !== '' ? rawConductor : 'SIN DATOS';
+    const conductorLower = conductor.toLowerCase();
+
+    const vehicle = rawVehicle.toUpperCase();
+    const vehicleLower = vehicle.toLowerCase();
 
     const recordId = row.llave ? String(row.llave).trim() : `${dateParsed.iso}-${rawVehicle}-${idx}`;
 
@@ -89,13 +94,16 @@ export function parseCheckListCsv(csvText: string): NormalizedCheckListRecord[] 
       monthName: getMonthNameEs(month),
       weekNumber: getWeekNumber(dateParsed.iso),
       dayOfWeek: getDayOfWeekEs(dateParsed.iso),
-      vehicle: rawVehicle.toUpperCase(),
+      vehicle,
+      vehicleLower,
       salida,
       retorno,
       contar2,
       estado,
       contratista,
+      contratistaLower,
       conductor,
+      conductorLower,
       severity,
       isComplete: contar2 === 2,
       isDepartureMissing: salida === 0,
@@ -205,9 +213,9 @@ export function applyFilters(records: NormalizedCheckListRecord[], filters: Filt
     // Search query (matches plate, driver, contractor, or date)
     if (filters.searchQuery && filters.searchQuery.trim()) {
       const q = filters.searchQuery.trim().toLowerCase();
-      const matchVehicle = rec.vehicle.toLowerCase().includes(q);
-      const matchDriver = rec.conductor.toLowerCase().includes(q);
-      const matchContractor = rec.contratista.toLowerCase().includes(q);
+      const matchVehicle = rec.vehicleLower.includes(q);
+      const matchDriver = rec.conductorLower.includes(q);
+      const matchContractor = rec.contratistaLower.includes(q);
       const matchDate = rec.dateFormatted.includes(q) || rec.dateIso.includes(q);
       if (!matchVehicle && !matchDriver && !matchContractor && !matchDate) {
         return false;

@@ -9,7 +9,6 @@ import {
   Activity,
   BarChart3,
   ChevronDown,
-  Sparkles,
   Info
 } from 'lucide-react';
 
@@ -181,19 +180,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 })}
               </div>
             )}
-          </div>
-
-          {/* Modular Architecture Banner */}
-          <div className="pt-4 border-t border-slate-800/80">
-            <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700/60 text-xs">
-              <div className="flex items-center gap-1.5 text-blue-400 font-semibold mb-1">
-                <Sparkles className="w-3.5 h-3.5" />
-                <span>Diseño Modular</span>
-              </div>
-              <p className="text-[11px] text-slate-400 leading-relaxed">
-                Plataforma escalable lista para conectar mantenimiento, combustible, llantas e indicadores.
-              </p>
-            </div>
           </div>
         </nav>
 

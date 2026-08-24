@@ -2,19 +2,69 @@ import express from "express";
 import path from "path";
 import https from "https";
 import { createServer as createViteServer } from "vite";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 const PORT = 3000;
 
 app.use(express.json());
 
-const GOOGLE_SHEET_ID = "18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk";
-const GOOGLE_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk/gviz/tq?tqx=out:csv&sheet=Check%20list`;
+const DEFAULT_SHEET_ID = "18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk";
+const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
+const GOOGLE_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Check%20list`;
 
 // In-memory cache for live sheet data
 let cachedCsvData: { raw: string; fetchedAt: string } | null = null;
 let lastFetchTime = 0;
 const CACHE_TTL_MS = 30 * 1000; // 30 seconds
+
+// ============================================================
+// USUARIOS: se cargan desde variables de entorno (.env)
+// Formato de cada variable en .env:
+//   USER_1='{"email":"...","password":"...","name":"...","role":"...","company":"...","permissions":["..."]}'
+// Se admiten hasta 10 usuarios (USER_1 a USER_10).
+// ============================================================
+interface AppUser {
+  email: string;
+  password: string;
+  name: string;
+  role: string;
+  company: string;
+  permissions: string[];
+}
+
+function loadUsersFromEnv(): AppUser[] {
+  const users: AppUser[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const raw = process.env[`USER_${i}`];
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as AppUser;
+      if (parsed.email && parsed.password) {
+        users.push({
+          ...parsed,
+          email: parsed.email.trim().toLowerCase(),
+          password: String(parsed.password).trim()
+        });
+      }
+    } catch (e) {
+      console.error(`[AON GALAPA] No se pudo parsear USER_${i} del .env (revisa el formato JSON).`);
+    }
+  }
+  return users;
+}
+
+const APP_USERS = loadUsersFromEnv();
+
+if (APP_USERS.length === 0) {
+  console.warn(
+    "[AON GALAPA] AVISO DE CONFIGURACIÓN: No se detectaron usuarios en las variables de entorno USER_1..USER_10. Configure .env con los usuarios autorizados."
+  );
+} else {
+  console.log(`[AON GALAPA] ${APP_USERS.length} usuario(s) cargado(s) desde variables de entorno.`);
+}
 
 function fetchSheetCsv(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -52,91 +102,27 @@ app.post("/api/auth/login", (req, res) => {
 
   const normalizedEmail = String(email).trim().toLowerCase();
   const trimmedPassword = String(password).trim();
-  
-  // 1. Administrador General
-  if (
-    normalizedEmail === "administraciongalapa@logisticos.co" &&
-    (trimmedPassword === "Superman10." || trimmedPassword === "Superman10")
-  ) {
-    return res.json({
-      success: true,
-      user: {
-        id: "admin-galapa",
-        email: "administraciongalapa@logisticos.co",
-        name: "Administración AON Galapa",
-        role: "Administrador General",
-        company: "AON GALAPA / Logisticos.co",
-        permissions: [
-          "admin",
-          "creator",
-          "full_access",
-          "module_config",
-          "view_all_kpis",
-          "view_all_data",
-          "manage_dashboard",
-          "manage_users",
-          "export_reports",
-          "system_settings"
-        ]
-      }
-    });
-  }
 
-  // 2. Control de Flota: Cristian Colpas
-  if (
-    normalizedEmail === "cristian.colpas@logisticos.co" &&
-    (trimmedPassword === "Superman10." || trimmedPassword === "Logisticos2026" || trimmedPassword === "Flota2026." || trimmedPassword === "Flota2026")
-  ) {
-    return res.json({
-      success: true,
-      user: {
-        id: "flota-01",
-        email: "cristian.colpas@logisticos.co",
-        name: "Cristian Colpas",
-        role: "Control Operativo de Flota",
-        company: "AON GALAPA / Logisticos.co",
-        permissions: [
-          "fleet_control",
-          "view_all_kpis",
-          "view_all_data",
-          "view_salida",
-          "view_retorno",
-          "view_alerts",
-          "export_reports"
-        ]
-      }
-    });
-  }
+  // Find matching user by email and password
+  const match = APP_USERS.find(
+    (u) => u.email === normalizedEmail && u.password === trimmedPassword
+  );
 
-  // 3. Control de Flota: Leonardo Rodríguez
-  if (
-    normalizedEmail === "leonardo.rodriguez@logisticos.co" &&
-    (trimmedPassword === "Superman10." || trimmedPassword === "Logisticos2026" || trimmedPassword === "Flota2026." || trimmedPassword === "Flota2026")
-  ) {
+  if (match) {
+    // No devolvemos la contraseña al cliente
+    const { password: _omit, ...safeUser } = match;
     return res.json({
       success: true,
       user: {
-        id: "flota-02",
-        email: "leonardo.rodriguez@logisticos.co",
-        name: "Leonardo Rodríguez",
-        role: "Control Operativo de Flota",
-        company: "AON GALAPA / Logisticos.co",
-        permissions: [
-          "fleet_control",
-          "view_all_kpis",
-          "view_all_data",
-          "view_salida",
-          "view_retorno",
-          "view_alerts",
-          "export_reports"
-        ]
-      }
+        id: safeUser.email,
+        ...safeUser,
+      },
     });
   }
 
   return res.status(401).json({
     success: false,
-    message: "Credenciales incorrectas. Verifique su usuario y contraseña."
+    message: "Credenciales incorrectas. Verifique su usuario y contraseña.",
   });
 });
 
@@ -151,7 +137,7 @@ app.get("/api/check-list-data", async (req, res) => {
         success: true,
         source: "cache",
         fetchedAt: cachedCsvData.fetchedAt,
-        csv: cachedCsvData.raw
+        csv: cachedCsvData.raw,
       });
     }
 
@@ -164,7 +150,7 @@ app.get("/api/check-list-data", async (req, res) => {
       success: true,
       source: "live",
       fetchedAt,
-      csv
+      csv,
     });
   } catch (error: any) {
     console.error("Error fetching Google Sheet CSV:", error);
@@ -174,13 +160,13 @@ app.get("/api/check-list-data", async (req, res) => {
         source: "fallback_cache",
         fetchedAt: cachedCsvData.fetchedAt,
         csv: cachedCsvData.raw,
-        warning: "Se utilizaron datos en caché debido a un error de red con Google Sheets."
+        warning: "Se utilizaron datos en caché debido a un error de red con Google Sheets.",
       });
     }
     return res.status(500).json({
       success: false,
       message: "No se pudo obtener la información de Google Sheets",
-      error: error?.message
+      error: error?.message,
     });
   }
 });

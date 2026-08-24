@@ -1,19 +1,8 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, Suspense } from 'react';
 import { LoginPage } from './components/LoginPage';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { FilterBar } from './components/FilterBar';
-import { KpiCards } from './components/KpiCards';
-import { ExecutiveSummaryCard } from './components/ExecutiveSummaryCard';
-import { SalidaVsRetornoChart } from './components/charts/SalidaVsRetornoChart';
-import { TrendChart } from './components/charts/TrendChart';
-import { ContractorChart } from './components/charts/ContractorChart';
-import { VehicleRankingTable } from './components/tables/VehicleRankingTable';
-import { DriverRankingTable } from './components/tables/DriverRankingTable';
-import { SalidaTrackingView } from './components/views/SalidaTrackingView';
-import { RetornoTrackingView } from './components/views/RetornoTrackingView';
-import { AlertsExceptionsView } from './components/views/AlertsExceptionsView';
-import { RawDatabaseView } from './components/views/RawDatabaseView';
 import {
   NormalizedCheckListRecord,
   FilterState,
@@ -36,9 +25,35 @@ import {
   LogOut,
   AlertTriangle,
   FileSpreadsheet,
-  RefreshCw,
   AlertCircle
 } from 'lucide-react';
+
+// Lazy loaded views for code splitting and faster initial bundle load
+const ExecutiveDashboardView = React.lazy(() =>
+  import('./components/views/ExecutiveDashboardView').then((m) => ({
+    default: m.ExecutiveDashboardView
+  }))
+);
+const SalidaTrackingView = React.lazy(() =>
+  import('./components/views/SalidaTrackingView').then((m) => ({
+    default: m.SalidaTrackingView
+  }))
+);
+const RetornoTrackingView = React.lazy(() =>
+  import('./components/views/RetornoTrackingView').then((m) => ({
+    default: m.RetornoTrackingView
+  }))
+);
+const AlertsExceptionsView = React.lazy(() =>
+  import('./components/views/AlertsExceptionsView').then((m) => ({
+    default: m.AlertsExceptionsView
+  }))
+);
+const RawDatabaseView = React.lazy(() =>
+  import('./components/views/RawDatabaseView').then((m) => ({
+    default: m.RawDatabaseView
+  }))
+);
 
 const SESSION_STORAGE_KEY = 'aon_galapa_session_v1';
 const DIRECT_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk/gviz/tq?tqx=out:csv&sheet=Check%20list`;
@@ -89,7 +104,7 @@ export default function App() {
     searchQuery: ''
   });
 
-  // Date Extents from raw data
+  // Date Extents from raw data (single pass without sorting entire array)
   const { minDate, maxDate, contractorOptions, vehicleOptions, driverOptions } = useMemo(() => {
     if (allRecords.length === 0) {
       return {
@@ -101,33 +116,31 @@ export default function App() {
       };
     }
 
-    const sortedDates = [...allRecords]
-      .map((r) => r.dateIso)
-      .filter(Boolean)
-      .sort();
-    const minD = sortedDates[0] || '';
-    const maxD = sortedDates[sortedDates.length - 1] || '';
+    let minD = '';
+    let maxD = '';
+    const contractorSet = new Set<string>();
+    const vehicleSet = new Set<string>();
+    const driverSet = new Set<string>();
 
-    const contractors = Array.from(
-      new Set(allRecords.map((r) => r.contratista).filter(Boolean))
-    ).sort();
-    const vehicles = Array.from(
-      new Set(allRecords.map((r) => r.vehicle).filter(Boolean))
-    ).sort();
-    const drivers = Array.from(
-      new Set(
-        allRecords
-          .map((r) => r.conductor)
-          .filter((c) => c && c !== 'SIN DATOS' && c !== '#N/A')
-      )
-    ).sort();
+    for (let i = 0; i < allRecords.length; i++) {
+      const r = allRecords[i];
+      if (r.dateIso) {
+        if (!minD || r.dateIso < minD) minD = r.dateIso;
+        if (!maxD || r.dateIso > maxD) maxD = r.dateIso;
+      }
+      if (r.contratista) contractorSet.add(r.contratista);
+      if (r.vehicle) vehicleSet.add(r.vehicle);
+      if (r.conductor && r.conductor !== 'SIN DATOS' && r.conductor !== '#N/A') {
+        driverSet.add(r.conductor);
+      }
+    }
 
     return {
       minDate: minD,
       maxDate: maxD,
-      contractorOptions: contractors,
-      vehicleOptions: vehicles,
-      driverOptions: drivers
+      contractorOptions: Array.from(contractorSet).sort(),
+      vehicleOptions: Array.from(vehicleSet).sort(),
+      driverOptions: Array.from(driverSet).sort()
     };
   }, [allRecords]);
 
@@ -403,72 +416,54 @@ export default function App() {
                   totalAllRecords={allRecords.length}
                 />
 
-                {/* VIEW 1: EXECUTIVE DASHBOARD */}
-                {activeTab === 'dashboard' && (
-                  <div className="space-y-6 animate-in fade-in duration-200">
-                    {/* Top 5 KPIs */}
-                    <KpiCards kpis={kpis} />
-
-                    {/* AI / BI Automated Intelligence Narrative */}
-                    <ExecutiveSummaryCard insights={automatedInsight} />
-
-                    {/* Chart Row 1: Salida vs Retorno & Trend Chart */}
-                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                      <div className="lg:col-span-5">
-                        <SalidaVsRetornoChart kpis={kpis} />
-                      </div>
-                      <div className="lg:col-span-7">
-                        <TrendChart
-                          trendData={trendData}
-                          currentGrouping={filters.trendGrouping}
-                          onGroupingChange={(grp) =>
-                            setFilters((prev) => ({ ...prev, trendGrouping: grp }))
-                          }
-                        />
-                      </div>
+                {/* Suspense with Fallback for Lazy-loaded Views */}
+                <Suspense
+                  fallback={
+                    <div className="p-12 text-center bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3 animate-pulse">
+                      <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                      <p className="text-xs text-slate-400 font-medium">Cargando vista operativa...</p>
                     </div>
+                  }
+                >
+                  {/* VIEW 1: EXECUTIVE DASHBOARD */}
+                  {activeTab === 'dashboard' && (
+                    <ExecutiveDashboardView
+                      kpis={kpis}
+                      automatedInsight={automatedInsight}
+                      trendData={trendData}
+                      contractorStats={contractorStats}
+                      vehicleRankings={vehicleRankings}
+                      driverRankings={driverRankings}
+                      currentGrouping={filters.trendGrouping}
+                      onGroupingChange={(grp) =>
+                        setFilters((prev) => ({ ...prev, trendGrouping: grp }))
+                      }
+                    />
+                  )}
 
-                    {/* Chart Row 2: Contractor Compliance */}
-                    <ContractorChart contractorStats={contractorStats} />
-
-                    {/* Tables: Vehicle & Driver Rankings */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <VehicleRankingTable rankings={vehicleRankings} />
-                      <DriverRankingTable rankings={driverRankings} />
-                    </div>
-                  </div>
-                )}
-
-                {/* VIEW 2: SALIDA TRACKING */}
-                {activeTab === 'salida' && (
-                  <div className="animate-in fade-in duration-200">
+                  {/* VIEW 2: SALIDA TRACKING */}
+                  {activeTab === 'salida' && (
                     <SalidaTrackingView records={filteredRecords} kpis={kpis} />
-                  </div>
-                )}
+                  )}
 
-                {/* VIEW 3: RETORNO TRACKING */}
-                {activeTab === 'retorno' && (
-                  <div className="animate-in fade-in duration-200">
+                  {/* VIEW 3: RETORNO TRACKING */}
+                  {activeTab === 'retorno' && (
                     <RetornoTrackingView records={filteredRecords} kpis={kpis} />
-                  </div>
-                )}
+                  )}
 
-                {/* VIEW 4: ALERTS AND EXCEPTIONS */}
-                {activeTab === 'alertas' && (
-                  <div className="animate-in fade-in duration-200">
+                  {/* VIEW 4: ALERTS AND EXCEPTIONS */}
+                  {activeTab === 'alertas' && (
                     <AlertsExceptionsView records={filteredRecords} kpis={kpis} />
-                  </div>
-                )}
+                  )}
 
-                {/* VIEW 5: RAW GOOGLE SHEETS DATABASE */}
-                {activeTab === 'database' && (
-                  <div className="animate-in fade-in duration-200">
+                  {/* VIEW 5: RAW GOOGLE SHEETS DATABASE */}
+                  {activeTab === 'database' && (
                     <RawDatabaseView
                       records={filteredRecords}
                       totalRecordsCount={allRecords.length}
                     />
-                  </div>
-                )}
+                  )}
+                </Suspense>
               </>
             )}
           </div>

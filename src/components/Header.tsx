@@ -7,7 +7,6 @@ import {
   LogOut,
   User,
   Database,
-  ExternalLink,
   ChevronDown
 } from 'lucide-react';
 import { UserSession } from '../types';
@@ -139,15 +138,6 @@ export const Header: React.FC<HeaderProps> = ({
                       <User className="w-3.5 h-3.5 text-blue-400" />
                       <span>Ver Permisos y Rol</span>
                     </button>
-                    <a
-                      href="https://docs.google.com/spreadsheets/d/18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk/edit?gid=0#gid=0"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full px-4 py-2 text-left text-xs text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2"
-                    >
-                      <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
-                      <span>Abrir Google Sheet Origen</span>
-                    </a>
                   </div>
 
                   <div className="pt-1 border-t border-slate-800">

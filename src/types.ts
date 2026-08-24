@@ -27,12 +27,15 @@ export interface NormalizedCheckListRecord {
   weekNumber: number;
   dayOfWeek: string;
   vehicle: string;
+  vehicleLower: string;
   salida: 0 | 1;
   retorno: 0 | 1;
   contar2: number; // 0, 1, 2
   estado: ComplianceStatus;
   contratista: string;
+  contratistaLower: string;
   conductor: string;
+  conductorLower: string;
   severity: SeverityLevel;
   isComplete: boolean;
   isDepartureMissing: boolean;

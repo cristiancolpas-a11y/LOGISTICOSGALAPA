@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Database,
   Search,
   Download,
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
   Table,
   CheckCircle2,
   XCircle,
@@ -26,19 +25,21 @@ export const RawDatabaseView: React.FC<RawDatabaseViewProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
 
-  const filtered = records.filter((r) => {
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase();
-    return (
-      r.id.toLowerCase().includes(q) ||
-      r.vehicle.toLowerCase().includes(q) ||
-      r.conductor.toLowerCase().includes(q) ||
-      r.contratista.toLowerCase().includes(q) ||
-      r.dateFormatted.includes(q) ||
-      r.rawDate.includes(q) ||
-      r.estado.toLowerCase().includes(q)
-    );
-  });
+  const filtered = useMemo(() => {
+    if (!searchTerm.trim()) return records;
+    const q = searchTerm.trim().toLowerCase();
+    return records.filter((r) => {
+      return (
+        r.id.toLowerCase().includes(q) ||
+        (r.vehicleLower || r.vehicle.toLowerCase()).includes(q) ||
+        (r.conductorLower || r.conductor.toLowerCase()).includes(q) ||
+        (r.contratistaLower || r.contratista.toLowerCase()).includes(q) ||
+        r.dateFormatted.includes(q) ||
+        r.rawDate.includes(q) ||
+        r.estado.toLowerCase().includes(q)
+      );
+    });
+  }, [records, searchTerm]);
 
   const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1;
   const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -104,16 +105,6 @@ export const RawDatabaseView: React.FC<RawDatabaseViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          <a
-            href="https://docs.google.com/spreadsheets/d/18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk/edit?gid=0#gid=0"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl border border-slate-700 transition-colors"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
-            <span>Abrir en Google Sheets</span>
-          </a>
-
           <button
             onClick={handleExportFullCsv}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl shadow-md shadow-blue-600/20 transition-colors"

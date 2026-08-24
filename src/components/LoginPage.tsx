@@ -33,7 +33,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     const cleanPassword = password.trim();
 
     try {
-      // First attempt backend server authentication
+      // Backend server authentication
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -51,106 +51,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         return;
       }
 
-      // Client-side fallback check
-      if (checkClientCredentials(cleanEmail, cleanPassword)) {
-        return;
-      }
-
       setError(data.message || 'Usuario o contraseña incorrectos. Verifique sus credenciales.');
     } catch {
-      // Fallback in case backend is unreachable
-      if (checkClientCredentials(cleanEmail, cleanPassword)) {
-        return;
-      }
       setError('Error al procesar el inicio de sesión. Verifique sus credenciales.');
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const checkClientCredentials = (cleanEmail: string, cleanPassword: string): boolean => {
-    // 1. Administrador General
-    if (
-      cleanEmail === 'administraciongalapa@logisticos.co' &&
-      (cleanPassword === 'Superman10.' || cleanPassword === 'Superman10')
-    ) {
-      const session: UserSession = {
-        id: 'admin-galapa',
-        email: 'administraciongalapa@logisticos.co',
-        name: 'Administración AON Galapa',
-        role: 'Administrador General',
-        company: 'AON GALAPA / Logisticos.co',
-        permissions: [
-          'admin',
-          'creator',
-          'full_access',
-          'module_config',
-          'view_all_kpis',
-          'view_all_data',
-          'manage_dashboard',
-          'manage_users',
-          'export_reports',
-          'system_settings'
-        ],
-        authenticatedAt: new Date().toISOString()
-      };
-      onLoginSuccess(session);
-      return true;
-    }
-
-    // 2. Control de Flota - Cristian Colpas
-    if (
-      cleanEmail === 'cristian.colpas@logisticos.co' &&
-      (cleanPassword === 'Superman10.' || cleanPassword === 'Logisticos2026' || cleanPassword === 'Flota2026.' || cleanPassword === 'Flota2026')
-    ) {
-      const session: UserSession = {
-        id: 'flota-01',
-        email: 'cristian.colpas@logisticos.co',
-        name: 'Cristian Colpas',
-        role: 'Control Operativo de Flota',
-        company: 'AON GALAPA / Logisticos.co',
-        permissions: [
-          'fleet_control',
-          'view_all_kpis',
-          'view_all_data',
-          'view_salida',
-          'view_retorno',
-          'view_alerts',
-          'export_reports'
-        ],
-        authenticatedAt: new Date().toISOString()
-      };
-      onLoginSuccess(session);
-      return true;
-    }
-
-    // 3. Control de Flota - Leonardo Rodríguez
-    if (
-      cleanEmail === 'leonardo.rodriguez@logisticos.co' &&
-      (cleanPassword === 'Superman10.' || cleanPassword === 'Logisticos2026' || cleanPassword === 'Flota2026.' || cleanPassword === 'Flota2026')
-    ) {
-      const session: UserSession = {
-        id: 'flota-02',
-        email: 'leonardo.rodriguez@logisticos.co',
-        name: 'Leonardo Rodríguez',
-        role: 'Control Operativo de Flota',
-        company: 'AON GALAPA / Logisticos.co',
-        permissions: [
-          'fleet_control',
-          'view_all_kpis',
-          'view_all_data',
-          'view_salida',
-          'view_retorno',
-          'view_alerts',
-          'export_reports'
-        ],
-        authenticatedAt: new Date().toISOString()
-      };
-      onLoginSuccess(session);
-      return true;
-    }
-
-    return false;
   };
 
   return (
