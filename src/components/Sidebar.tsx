@@ -9,7 +9,9 @@ import {
   Activity,
   BarChart3,
   ChevronDown,
-  Info
+  Info,
+  Truck,
+  Sparkles
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -35,22 +37,49 @@ export const Sidebar: React.FC<SidebarProps> = ({
       description: 'Control y auditoría de inspecciones de salida y retorno'
     },
     {
-      id: 'mantenimiento',
-      name: 'Mantenimiento',
+      id: 'calibracion',
+      name: 'Calibración',
       icon: Wrench,
-      badge: 'Próximamente',
-      badgeColor: 'bg-slate-700/60 text-slate-400 border-slate-600/40',
-      active: false,
-      description: 'Programación preventiva, correctiva y órdenes de taller'
+      badge: 'Operativo',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      active: true,
+      description: 'Control de calibraciones en taller y evidencia fotográfica'
+    },
+    {
+      id: 'utilizacion',
+      name: 'Utilización',
+      icon: Activity,
+      badge: 'Operativo',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      active: true,
+      description: 'Capacidad operativa, viajes por vehículo y sobredemanda'
     },
     {
       id: 'disponibilidad',
       name: 'Disponibilidad',
       icon: Gauge,
-      badge: 'Próximamente',
-      badgeColor: 'bg-slate-700/60 text-slate-400 border-slate-600/40',
-      active: false,
-      description: 'Índice de disponibilidad mecánica y flota inoperativa'
+      badge: 'Operativo',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      active: true,
+      description: 'Índice de disponibilidad mecánica y flota inoperativa por semana'
+    },
+    {
+      id: 'vehiculos',
+      name: 'Vehículos',
+      icon: Truck,
+      badge: 'Operativo',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      active: true,
+      description: 'Catálogo maestro de vehículos de la flota oficial'
+    },
+    {
+      id: 'lavados',
+      name: 'Lavados',
+      icon: Sparkles,
+      badge: 'Operativo',
+      badgeColor: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+      active: true,
+      description: 'Control higiénico, talleres de lavado y registro de fotos'
     },
     {
       id: 'llantas',
@@ -78,15 +107,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       badgeColor: 'bg-slate-700/60 text-slate-400 border-slate-600/40',
       active: false,
       description: 'Rendimiento km/galón, cargas y anomalías de tanqueo'
-    },
-    {
-      id: 'kilometraje',
-      name: 'Kilometraje',
-      icon: Activity,
-      badge: 'Próximamente',
-      badgeColor: 'bg-slate-700/60 text-slate-400 border-slate-600/40',
-      active: false,
-      description: 'Odómetros, recorridos diarios y estimación de desgaste'
     },
     {
       id: 'indicadores',

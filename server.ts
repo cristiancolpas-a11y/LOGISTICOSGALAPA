@@ -15,16 +15,14 @@ const DEFAULT_SHEET_ID = "18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk";
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
 const GOOGLE_SHEET_CSV_URL = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=Check%20list`;
 
-// In-memory cache for live sheet data
-let cachedCsvData: { raw: string; fetchedAt: string } | null = null;
-let lastFetchTime = 0;
+// In-memory cache for live sheet data (keyed by sheet name)
+const sheetCache = new Map<string, { raw: string; fetchedAt: string; timestamp: number }>();
 const CACHE_TTL_MS = 30 * 1000; // 30 seconds
 
 // ============================================================
-// USUARIOS: se cargan desde variables de entorno (.env)
+// USUARIOS: se cargan desde variables de entorno (.env) o defaults autorizados
 // Formato de cada variable en .env:
 //   USER_1='{"email":"...","password":"...","name":"...","role":"...","company":"...","permissions":["..."]}'
-// Se admiten hasta 10 usuarios (USER_1 a USER_10).
 // ============================================================
 interface AppUser {
   email: string;
@@ -34,6 +32,33 @@ interface AppUser {
   company: string;
   permissions: string[];
 }
+
+const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
+  {
+    email: "cristian.colpas@logisticos.co",
+    password: "Galapa2026*",
+    name: "Cristian Colpas",
+    role: "Control Operativo de Flota",
+    company: "AON GALAPA / Logisticos.co",
+    permissions: ["fleet_control", "view_all_kpis", "view_all_data", "view_salida", "view_retorno", "view_alerts", "export_reports"]
+  },
+  {
+    email: "leonardo.rodriguez@logisticos.co",
+    password: "Galapa2026*",
+    name: "Leonardo Rodríguez",
+    role: "Control Operativo de Flota",
+    company: "AON GALAPA / Logisticos.co",
+    permissions: ["fleet_control", "view_all_kpis", "view_all_data", "view_salida", "view_retorno", "view_alerts", "export_reports"]
+  },
+  {
+    email: "administraciongalapa@logisticos.co",
+    password: "Galapa2026*",
+    name: "Administración AON Galapa",
+    role: "Administrador General",
+    company: "AON GALAPA / Logisticos.co",
+    permissions: ["admin", "creator", "full_access", "module_config", "view_all_kpis", "view_all_data", "manage_dashboard", "manage_users", "export_reports", "system_settings"]
+  }
+];
 
 function loadUsersFromEnv(): AppUser[] {
   const users: AppUser[] = [];
@@ -53,22 +78,23 @@ function loadUsersFromEnv(): AppUser[] {
       console.error(`[AON GALAPA] No se pudo parsear USER_${i} del .env (revisa el formato JSON).`);
     }
   }
+
+  // Si no se configuraron usuarios en variables de entorno, usar los usuarios autorizados predeterminados
+  if (users.length === 0) {
+    return DEFAULT_AUTHORIZED_USERS;
+  }
+
   return users;
 }
 
 const APP_USERS = loadUsersFromEnv();
 
-if (APP_USERS.length === 0) {
-  console.warn(
-    "[AON GALAPA] AVISO DE CONFIGURACIÓN: No se detectaron usuarios en las variables de entorno USER_1..USER_10. Configure .env con los usuarios autorizados."
-  );
-} else {
-  console.log(`[AON GALAPA] ${APP_USERS.length} usuario(s) cargado(s) desde variables de entorno.`);
-}
+console.log(`[AON GALAPA] ${APP_USERS.length} usuario(s) cargado(s) para autenticación.`);
 
-function fetchSheetCsv(): Promise<string> {
+function fetchSheetCsv(sheetName: string = "Check list"): Promise<string> {
+  const targetUrl = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
   return new Promise((resolve, reject) => {
-    https.get(GOOGLE_SHEET_CSV_URL, (res) => {
+    https.get(targetUrl, (res) => {
       if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         https.get(res.headers.location, (redirectRes) => {
           let data = "";
@@ -126,46 +152,52 @@ app.post("/api/auth/login", (req, res) => {
   });
 });
 
-// Google Sheets Proxy Endpoint
-app.get("/api/check-list-data", async (req, res) => {
+// Generic Google Sheets Proxy Endpoint
+app.get(["/api/check-list-data", "/api/sheet-data"], async (req, res) => {
+  const sheetName = String(req.query.sheet || "Check list").trim();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
 
+  const cached = sheetCache.get(sheetName);
+
   try {
-    if (!forceRefresh && cachedCsvData && (now - lastFetchTime < CACHE_TTL_MS)) {
+    if (!forceRefresh && cached && (now - cached.timestamp < CACHE_TTL_MS)) {
       return res.json({
         success: true,
+        sheet: sheetName,
         source: "cache",
-        fetchedAt: cachedCsvData.fetchedAt,
-        csv: cachedCsvData.raw,
+        fetchedAt: cached.fetchedAt,
+        csv: cached.raw,
       });
     }
 
-    const csv = await fetchSheetCsv();
+    const csv = await fetchSheetCsv(sheetName);
     const fetchedAt = new Date().toISOString();
-    cachedCsvData = { raw: csv, fetchedAt };
-    lastFetchTime = now;
+    sheetCache.set(sheetName, { raw: csv, fetchedAt, timestamp: now });
 
     return res.json({
       success: true,
+      sheet: sheetName,
       source: "live",
       fetchedAt,
       csv,
     });
   } catch (error: any) {
-    console.error("Error fetching Google Sheet CSV:", error);
-    if (cachedCsvData) {
+    console.error(`Error fetching Google Sheet CSV for sheet "${sheetName}":`, error);
+    if (cached) {
       return res.json({
         success: true,
+        sheet: sheetName,
         source: "fallback_cache",
-        fetchedAt: cachedCsvData.fetchedAt,
-        csv: cachedCsvData.raw,
+        fetchedAt: cached.fetchedAt,
+        csv: cached.raw,
         warning: "Se utilizaron datos en caché debido a un error de red con Google Sheets.",
       });
     }
     return res.status(500).json({
       success: false,
-      message: "No se pudo obtener la información de Google Sheets",
+      sheet: sheetName,
+      message: `No se pudo obtener la información de la pestaña "${sheetName}" en Google Sheets`,
       error: error?.message,
     });
   }

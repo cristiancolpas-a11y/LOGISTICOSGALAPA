@@ -11,7 +11,16 @@ import {
   AutomatedInsight,
   SemaphoreColor,
   SeverityLevel,
-  ComplianceStatus
+  ComplianceStatus,
+  CalibracionRecord,
+  CalibracionSummary,
+  UtilizacionRecord,
+  UtilizacionSummary,
+  DisponibilidadRecord,
+  DisponibilidadSummary,
+  VehiculoRecord,
+  LavadoRecord,
+  LavadosSummary
 } from '../types';
 import {
   parseAnyDateToIso,
@@ -726,3 +735,517 @@ export function generateAutomatedInsight(
     recommendedActions
   };
 }
+
+// =========================================================================
+// PESTAÑA 1: PARSER Y SUMARIO DE CALIBRACION
+// =========================================================================
+export function parseCalibracionCsv(csvText: string): CalibracionRecord[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+
+  const parsed = Papa.parse<Record<string, any>>(csvText, {
+    header: true,
+    skipEmptyLines: 'greedy'
+  });
+
+  const records: CalibracionRecord[] = [];
+
+  parsed.data.forEach((row, idx) => {
+    // Lookup keys accounting for possible trailing spaces
+    const mes = String(row['MES'] || row['Mes'] || row['mes'] || '').trim().toUpperCase();
+    const rawFecha = row['FECHA '] || row['FECHA'] || row['Fecha '] || row['Fecha'] || row['fecha'] || '';
+    const semana = String(row['SEMANA '] || row['SEMANA'] || row['Semana '] || row['Semana'] || '').trim();
+    const placa = String(row['PLACA'] || row['Placa'] || row['placa'] || '').trim().toUpperCase();
+    const taller = String(row['TALLER '] || row['TALLER'] || row['Taller '] || row['Taller'] || '').trim();
+    const fotoEvidenciaUrl = String(row['FOTO DE EVIDENCIA '] || row['FOTO DE EVIDENCIA'] || row['Foto de Evidencia'] || row['Foto'] || '').trim();
+    const rawEstado = String(row['ESTADO'] || row['Estado'] || row['estado'] || '').trim().toUpperCase();
+    const cd = String(row['CD'] || row['Cd'] || row['cd'] || 'GALAPA').trim().toUpperCase();
+    const contratista = String(row['CONTRATISTA'] || row['Contratista'] || 'Logisticos.co').trim();
+
+    if (!placa && !mes && !rawFecha) return;
+
+    const dateParsed = parseAnyDateToIso(rawFecha);
+    const estado = rawEstado.includes('COMPLET') ? 'COMPLETADO' : 'PENDIENTE';
+
+    records.push({
+      id: `calib-${idx}-${placa}`,
+      mes: mes || 'SIN MES',
+      fechaRaw: String(rawFecha),
+      fechaIso: dateParsed.iso,
+      fechaFormatted: dateParsed.formatted,
+      semana: semana || 'N/A',
+      placa: placa || 'SIN PLACA',
+      placaLower: (placa || '').toLowerCase(),
+      taller: taller || 'TALLER NO ASIGNADO',
+      tallerLower: (taller || '').toLowerCase(),
+      fotoEvidenciaUrl,
+      estado,
+      cd: cd || 'GALAPA',
+      contratista: contratista || 'Logisticos.co',
+      contratistaLower: (contratista || '').toLowerCase()
+    });
+  });
+
+  return records;
+}
+
+export function calculateCalibracionSummary(records: CalibracionRecord[]): CalibracionSummary {
+  const total = records.length;
+  let completados = 0;
+  let pendientes = 0;
+
+  const mesMap = new Map<string, { completados: number; pendientes: number; total: number }>();
+  const cdMap = new Map<string, { completados: number; pendientes: number; total: number }>();
+  const tallerMap = new Map<string, { completados: number; pendientes: number; total: number }>();
+
+  // Ordered list of months for standard timeline
+  const MONTH_ORDER = ['FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO'];
+
+  records.forEach((r) => {
+    if (r.estado === 'COMPLETADO') {
+      completados++;
+    } else {
+      pendientes++;
+    }
+
+    // Mes
+    const m = r.mes || 'OTRO';
+    if (!mesMap.has(m)) mesMap.set(m, { completados: 0, pendientes: 0, total: 0 });
+    const mEntry = mesMap.get(m)!;
+    mEntry.total++;
+    if (r.estado === 'COMPLETADO') mEntry.completados++;
+    else mEntry.pendientes++;
+
+    // CD
+    const c = r.cd || 'GALAPA';
+    if (!cdMap.has(c)) cdMap.set(c, { completados: 0, pendientes: 0, total: 0 });
+    const cEntry = cdMap.get(c)!;
+    cEntry.total++;
+    if (r.estado === 'COMPLETADO') cEntry.completados++;
+    else cEntry.pendientes++;
+
+    // Taller
+    const t = r.taller || 'NO ASIGNADO';
+    if (!tallerMap.has(t)) tallerMap.set(t, { completados: 0, pendientes: 0, total: 0 });
+    const tEntry = tallerMap.get(t)!;
+    tEntry.total++;
+    if (r.estado === 'COMPLETADO') tEntry.completados++;
+    else tEntry.pendientes++;
+  });
+
+  const pctCompletado = total > 0 ? Number(((completados / total) * 100).toFixed(1)) : 0;
+  const pctPendiente = total > 0 ? Number(((pendientes / total) * 100).toFixed(1)) : 0;
+
+  // Sort byMes based on natural month order
+  const byMes = Array.from(mesMap.entries())
+    .map(([mes, stat]) => ({ mes, ...stat }))
+    .sort((a, b) => {
+      const idxA = MONTH_ORDER.indexOf(a.mes);
+      const idxB = MONTH_ORDER.indexOf(b.mes);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      return a.mes.localeCompare(b.mes);
+    });
+
+  const byCd = Array.from(cdMap.entries())
+    .map(([cd, stat]) => ({
+      cd,
+      ...stat,
+      pctCompletado: stat.total > 0 ? Number(((stat.completados / stat.total) * 100).toFixed(1)) : 0
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  const byTaller = Array.from(tallerMap.entries())
+    .map(([taller, stat]) => ({ taller, ...stat }))
+    .sort((a, b) => b.total - a.total);
+
+  return {
+    total,
+    completados,
+    pendientes,
+    pctCompletado,
+    pctPendiente,
+    byMes,
+    byCd,
+    byTaller
+  };
+}
+
+// =========================================================================
+// PESTAÑA 2: PARSER Y SUMARIO DE UTILIZACION
+// =========================================================================
+export function parseUtilizacionCsv(csvText: string): UtilizacionRecord[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+
+  const parsed = Papa.parse<Record<string, any>>(csvText, {
+    header: true,
+    skipEmptyLines: 'greedy'
+  });
+
+  const records: UtilizacionRecord[] = [];
+
+  parsed.data.forEach((row, idx) => {
+    const rawFecha = row['Fecha'] || row['FECHA'] || row['fecha'] || '';
+    if (!rawFecha) return;
+
+    const viajes = Number(row['Cantidad de Viajes'] || row['cantidad de viajes'] || row['Viajes'] || 0);
+    const flota = Number(row['cantidad de flota'] || row['Cantidad de flota'] || row['Flota'] || 0);
+
+    // Read utlizacion with exact spelling
+    let rawUtil = row['utlizacion'] || row['utilizacion'] || row['UTILIZACION'] || row['Utlizacion'] || 0;
+    if (typeof rawUtil === 'string') {
+      rawUtil = parseFloat(rawUtil.replace('%', '').replace(',', '.').trim());
+    }
+    let utilDecimal = Number(rawUtil) || 0;
+    // If entered directly as 90 instead of 0.90
+    if (utilDecimal > 2) {
+      utilDecimal = utilDecimal / 100;
+    }
+
+    const dateParsed = parseAnyDateToIso(rawFecha);
+    const utilPct = Number((utilDecimal * 100).toFixed(1));
+    const isAnomaly = utilDecimal > 1.0;
+
+    records.push({
+      id: `util-${idx}-${dateParsed.iso}`,
+      fechaRaw: String(rawFecha),
+      fechaIso: dateParsed.iso,
+      fechaFormatted: dateParsed.formatted,
+      cantidadViajes: viajes,
+      cantidadFlota: flota,
+      utilizacion: utilDecimal,
+      utilizacionPct: utilPct,
+      isAnomaly
+    });
+  });
+
+  // Sort chronologically
+  return records.sort((a, b) => a.fechaIso.localeCompare(b.fechaIso));
+}
+
+export function calculateUtilizacionSummary(records: UtilizacionRecord[]): UtilizacionSummary {
+  if (records.length === 0) {
+    return {
+      promedioPct: 0,
+      promedioViajes: 0,
+      totalViajes: 0,
+      promedioFlota: 0,
+      maxDia: null,
+      minDia: null,
+      anomaliasCount: 0,
+      anomalias: []
+    };
+  }
+
+  let totalUtilPct = 0;
+  let totalViajes = 0;
+  let totalFlota = 0;
+  const anomalias: UtilizacionRecord[] = [];
+
+  let maxItem: UtilizacionRecord = records[0];
+  let minItem: UtilizacionRecord = records[0];
+
+  // We find max among normal values (or whole list)
+  let maxNormalItem: UtilizacionRecord = records[0];
+
+  records.forEach((r) => {
+    totalUtilPct += r.utilizacionPct;
+    totalViajes += r.cantidadViajes;
+    totalFlota += r.cantidadFlota;
+
+    if (r.isAnomaly) {
+      anomalias.push(r);
+    } else {
+      if (r.utilizacionPct > maxNormalItem.utilizacionPct) {
+        maxNormalItem = r;
+      }
+    }
+
+    if (r.utilizacionPct > maxItem.utilizacionPct) {
+      maxItem = r;
+    }
+    if (r.utilizacionPct < minItem.utilizacionPct) {
+      minItem = r;
+    }
+  });
+
+  const promedioPct = Number((totalUtilPct / records.length).toFixed(1));
+  const promedioViajes = Number((totalViajes / records.length).toFixed(1));
+  const promedioFlota = Number((totalFlota / records.length).toFixed(1));
+
+  return {
+    promedioPct,
+    promedioViajes,
+    totalViajes,
+    promedioFlota,
+    maxDia: {
+      fechaFormatted: maxNormalItem.fechaFormatted || maxItem.fechaFormatted,
+      fechaIso: maxNormalItem.fechaIso || maxItem.fechaIso,
+      utilizacionPct: maxNormalItem.utilizacionPct || maxItem.utilizacionPct,
+      viajes: maxNormalItem.cantidadViajes || maxItem.cantidadViajes
+    },
+    minDia: {
+      fechaFormatted: minItem.fechaFormatted,
+      fechaIso: minItem.fechaIso,
+      utilizacionPct: minItem.utilizacionPct,
+      viajes: minItem.cantidadViajes
+    },
+    anomaliasCount: anomalias.length,
+    anomalias
+  };
+}
+
+// =========================================================================
+// PESTAÑA 3: PARSER Y SUMARIO DE DISPONIBILIDAD
+// =========================================================================
+export function parseDisponibilidadCsv(csvText: string): DisponibilidadRecord[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+
+  const parsed = Papa.parse<Record<string, any>>(csvText, {
+    header: true,
+    skipEmptyLines: 'greedy'
+  });
+
+  const records: DisponibilidadRecord[] = [];
+
+  parsed.data.forEach((row, idx) => {
+    const rawFecha = row['FECHA 1'] || row['FECHA'] || row['Fecha'] || '';
+    if (!rawFecha) return;
+
+    const cd = String(row['CD 1'] || row['CD'] || 'GALAPA').trim();
+    const contratista = String(row['CONTRATISTA 1'] || row['CONTRATISTA'] || 'Logisticos.co').trim();
+    const vhIndisponibles = Number(row['VH INDISPONIBLES 1'] || row['VH INDISPONIBLES'] || 0);
+    const vhsDisponibles = Number(row['VHS DISPONIBLES1'] || row['VHS DISPONIBLES'] || 0);
+    const totalVh = Number(row['TOTAl VH1'] || row['TOTAL VH1'] || row['TOTAL VH'] || (vhIndisponibles + vhsDisponibles));
+
+    let rawPromedio = row['%PROMEDIO1'] || row['%PROMEDIO'] || row['PROMEDIO'] || 0;
+    if (typeof rawPromedio === 'string') {
+      rawPromedio = parseFloat(rawPromedio.replace('%', '').replace(',', '.').trim());
+    }
+    let promedioDecimal = Number(rawPromedio) || 0;
+    if (promedioDecimal > 2) promedioDecimal = promedioDecimal / 100;
+
+    const semana = Number(row['SEMANA'] || row['Semana'] || 0);
+    const dateParsed = parseAnyDateToIso(rawFecha);
+    const promedioPct = Number((promedioDecimal * 100).toFixed(1));
+
+    records.push({
+      id: `disp-${idx}-${dateParsed.iso}`,
+      fechaRaw: String(rawFecha),
+      fechaIso: dateParsed.iso,
+      fechaFormatted: dateParsed.formatted,
+      cd: cd || 'GALAPA',
+      contratista: contratista || 'Logisticos.co',
+      vhIndisponibles,
+      vhsDisponibles,
+      totalVh,
+      promedio: promedioDecimal,
+      promedioPct,
+      semana: semana || 1
+    });
+  });
+
+  return records.sort((a, b) => a.fechaIso.localeCompare(b.fechaIso));
+}
+
+export function calculateDisponibilidadSummary(records: DisponibilidadRecord[]): DisponibilidadSummary {
+  if (records.length === 0) {
+    return {
+      promedioDisponibilidad: 0,
+      promedioIndisponibles: 0,
+      promedioDisponibles: 0,
+      totalFlotaPromedio: 0,
+      mejorSemana: null,
+      peorSemana: null,
+      bySemana: []
+    };
+  }
+
+  let totalPct = 0;
+  let totalIndisp = 0;
+  let totalDisp = 0;
+  let totalTotal = 0;
+
+  const semanaMap = new Map<number, { sumPct: number; sumDisp: number; sumIndisp: number; count: number }>();
+
+  records.forEach((r) => {
+    totalPct += r.promedioPct;
+    totalIndisp += r.vhIndisponibles;
+    totalDisp += r.vhsDisponibles;
+    totalTotal += r.totalVh;
+
+    const sem = r.semana;
+    if (!semanaMap.has(sem)) {
+      semanaMap.set(sem, { sumPct: 0, sumDisp: 0, sumIndisp: 0, count: 0 });
+    }
+    const sEntry = semanaMap.get(sem)!;
+    sEntry.sumPct += r.promedioPct;
+    sEntry.sumDisp += r.vhsDisponibles;
+    sEntry.sumIndisp += r.vhIndisponibles;
+    sEntry.count++;
+  });
+
+  const bySemana = Array.from(semanaMap.entries())
+    .map(([semana, stat]) => {
+      const avgPct = Number((stat.sumPct / stat.count).toFixed(1));
+      const dispAvg = Number((stat.sumDisp / stat.count).toFixed(1));
+      const indispAvg = Number((stat.sumIndisp / stat.count).toFixed(1));
+      return {
+        semana,
+        promedioPct: avgPct,
+        disponiblesAvg: dispAvg,
+        indisponiblesAvg: indispAvg,
+        totalAvg: Number((dispAvg + indispAvg).toFixed(1))
+      };
+    })
+    .sort((a, b) => a.semana - b.semana);
+
+  let mejorSemana: { semana: number; promedioPct: number } | null = null;
+  let peorSemana: { semana: number; promedioPct: number } | null = null;
+
+  bySemana.forEach((s) => {
+    if (!mejorSemana || s.promedioPct > mejorSemana.promedioPct) {
+      mejorSemana = { semana: s.semana, promedioPct: s.promedioPct };
+    }
+    if (!peorSemana || s.promedioPct < peorSemana.promedioPct) {
+      peorSemana = { semana: s.semana, promedioPct: s.promedioPct };
+    }
+  });
+
+  return {
+    promedioDisponibilidad: Number((totalPct / records.length).toFixed(1)),
+    promedioIndisponibles: Number((totalIndisp / records.length).toFixed(1)),
+    promedioDisponibles: Number((totalDisp / records.length).toFixed(1)),
+    totalFlotaPromedio: Number((totalTotal / records.length).toFixed(1)),
+    mejorSemana,
+    peorSemana,
+    bySemana
+  };
+}
+
+// =========================================================================
+// PESTAÑA 4: PARSER DE VEHICULOS (FLOTA MAESTRA)
+// =========================================================================
+export function parseVehiculosCsv(csvText: string): VehiculoRecord[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+
+  const parsed = Papa.parse<Record<string, any>>(csvText, {
+    header: true,
+    skipEmptyLines: 'greedy'
+  });
+
+  const list: VehiculoRecord[] = [];
+  const seen = new Set<string>();
+
+  parsed.data.forEach((row) => {
+    const placa = String(row['PLACA'] || row['Placa'] || row['placa'] || '').trim().toUpperCase();
+    if (!placa || seen.has(placa)) return;
+    seen.add(placa);
+
+    const cd = String(row['CD'] || row['Cd'] || 'GALAPA').trim();
+    const contratista = String(row['CONTRATISTA'] || row['Contratista'] || 'Logisticos.co').trim();
+
+    list.push({
+      placa,
+      cd: cd || 'GALAPA',
+      contratista: contratista || 'Logisticos.co'
+    });
+  });
+
+  return list.sort((a, b) => a.placa.localeCompare(b.placa));
+}
+
+// =========================================================================
+// PESTAÑA 5: PARSER Y SUMARIO DE LAVADOS
+// =========================================================================
+export function parseLavadosCsv(csvText: string): LavadoRecord[] {
+  if (!csvText || typeof csvText !== 'string') return [];
+
+  const parsed = Papa.parse<Record<string, any>>(csvText, {
+    header: true,
+    skipEmptyLines: 'greedy'
+  });
+
+  const records: LavadoRecord[] = [];
+
+  parsed.data.forEach((row, idx) => {
+    const id = String(row['ID_Reporte'] || row['ID'] || `lavado-${idx}`).trim();
+    const mes = String(row['MES'] || row['Mes'] || '').trim().toUpperCase();
+    const semana = String(row['SEMANA '] || row['SEMANA'] || row['Semana '] || row['Semana'] || '').trim();
+    const rawFecha = row['Fecha'] || row['FECHA'] || row['fecha'] || '';
+    const placa = String(row['Placa'] || row['PLACA'] || row['placa'] || '').trim().toUpperCase();
+    const evidenciaInicialUrl = String(row['Evidencia Inicial'] || row['EVIDENCIA INICIAL'] || '').trim();
+    const mapaTallerUrl = String(row['MAPA DE TALLER'] || row['Mapa de Taller'] || '').trim();
+    
+    // Normalization with trim to avoid duplicate groups like "VEHIPESA " vs "VEHIPESA"
+    const taller = String(row['TALLER'] || row['Taller'] || 'VEHIPESA').trim().toUpperCase();
+    const llave = String(row['llave'] || row['Llave'] || '').trim();
+    const contratista = String(row['CONTATISTA'] || row['CONTRATISTA'] || row['Contratista'] || 'Logisticos.co').trim();
+
+    if (!placa && !rawFecha && !mes) return;
+
+    const dateParsed = parseAnyDateToIso(rawFecha);
+
+    records.push({
+      id: id || `lav-${idx}`,
+      mes: mes || 'SIN MES',
+      semana: semana || 'N/A',
+      fechaRaw: String(rawFecha),
+      fechaIso: dateParsed.iso,
+      fechaFormatted: dateParsed.formatted,
+      placa: placa || 'SIN PLACA',
+      placaLower: (placa || '').toLowerCase(),
+      evidenciaInicialUrl,
+      mapaTallerUrl,
+      taller: taller || 'VEHIPESA',
+      tallerLower: (taller || '').toLowerCase(),
+      llave,
+      contratista: contratista || 'Logisticos.co'
+    });
+  });
+
+  return records;
+}
+
+export function calculateLavadosSummary(records: LavadoRecord[]): LavadosSummary {
+  const totalLavados = records.length;
+  const mesMap = new Map<string, number>();
+  const tallerMap = new Map<string, number>();
+
+  const MONTH_ORDER = ['FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO'];
+
+  records.forEach((r) => {
+    const m = r.mes || 'OTRO';
+    mesMap.set(m, (mesMap.get(m) || 0) + 1);
+
+    const t = r.taller || 'VEHIPESA';
+    tallerMap.set(t, (tallerMap.get(t) || 0) + 1);
+  });
+
+  const byMes = Array.from(mesMap.entries())
+    .map(([mes, count]) => ({ mes, count }))
+    .sort((a, b) => {
+      const idxA = MONTH_ORDER.indexOf(a.mes);
+      const idxB = MONTH_ORDER.indexOf(b.mes);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      return a.mes.localeCompare(b.mes);
+    });
+
+  const byTaller = Array.from(tallerMap.entries())
+    .map(([taller, count]) => ({
+      taller,
+      count,
+      pct: totalLavados > 0 ? Number(((count / totalLavados) * 100).toFixed(1)) : 0
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const tallerMasUsado = byTaller.length > 0 ? byTaller[0] : null;
+  const mesActualLavados = byMes.length > 0 ? byMes[byMes.length - 1].count : 0;
+
+  return {
+    totalLavados,
+    mesActualLavados,
+    tallerMasUsado,
+    byMes,
+    byTaller
+  };
+}
+

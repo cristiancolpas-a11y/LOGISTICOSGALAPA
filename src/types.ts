@@ -155,3 +155,127 @@ export interface UserSession {
   permissions: string[];
   authenticatedAt: string;
 }
+
+// ==========================================
+// PESTAÑA 1: CALIBRACION
+// ==========================================
+export interface CalibracionRecord {
+  id: string;
+  mes: string; // FEBRERO, MARZO, etc.
+  fechaRaw: string;
+  fechaIso: string;
+  fechaFormatted: string;
+  semana: string;
+  placa: string;
+  placaLower: string;
+  taller: string;
+  tallerLower: string;
+  fotoEvidenciaUrl: string;
+  estado: 'COMPLETADO' | 'PENDIENTE' | string;
+  cd: 'GALAPA' | 'LA ARENOSA' | string;
+  contratista: string;
+  contratistaLower: string;
+}
+
+export interface CalibracionSummary {
+  total: number;
+  completados: number;
+  pendientes: number;
+  pctCompletado: number;
+  pctPendiente: number;
+  byMes: { mes: string; completados: number; pendientes: number; total: number }[];
+  byCd: { cd: string; completados: number; pendientes: number; total: number; pctCompletado: number }[];
+  byTaller: { taller: string; completados: number; pendientes: number; total: number }[];
+}
+
+// ==========================================
+// PESTAÑA 2: UTILIZACION
+// ==========================================
+export interface UtilizacionRecord {
+  id: string;
+  fechaRaw: string;
+  fechaIso: string;
+  fechaFormatted: string;
+  cantidadViajes: number;
+  cantidadFlota: number;
+  utilizacion: number; // Decimal (e.g. 0.92 = 92%)
+  utilizacionPct: number; // Percentage (e.g. 92)
+  isAnomaly: boolean; // > 100% (e.g. 1.7)
+}
+
+export interface UtilizacionSummary {
+  promedioPct: number;
+  promedioViajes: number;
+  totalViajes: number;
+  promedioFlota: number;
+  maxDia: { fechaFormatted: string; fechaIso: string; utilizacionPct: number; viajes: number } | null;
+  minDia: { fechaFormatted: string; fechaIso: string; utilizacionPct: number; viajes: number } | null;
+  anomaliasCount: number;
+  anomalias: UtilizacionRecord[];
+}
+
+// ==========================================
+// PESTAÑA 3: DISPONIBILIDAD
+// ==========================================
+export interface DisponibilidadRecord {
+  id: string;
+  fechaRaw: string;
+  fechaIso: string;
+  fechaFormatted: string;
+  cd: string;
+  contratista: string;
+  vhIndisponibles: number;
+  vhsDisponibles: number;
+  totalVh: number;
+  promedio: number; // Decimal (e.g. 0.909)
+  promedioPct: number; // 90.9
+  semana: number;
+}
+
+export interface DisponibilidadSummary {
+  promedioDisponibilidad: number;
+  promedioIndisponibles: number;
+  promedioDisponibles: number;
+  totalFlotaPromedio: number;
+  mejorSemana: { semana: number; promedioPct: number } | null;
+  peorSemana: { semana: number; promedioPct: number } | null;
+  bySemana: { semana: number; promedioPct: number; disponiblesAvg: number; indisponiblesAvg: number; totalAvg: number }[];
+}
+
+// ==========================================
+// PESTAÑA 4: VEHICULOS (FLOTA MAESTRA)
+// ==========================================
+export interface VehiculoRecord {
+  placa: string;
+  cd: string;
+  contratista: string;
+}
+
+// ==========================================
+// PESTAÑA 5: LAVADOS
+// ==========================================
+export interface LavadoRecord {
+  id: string; // ID_Reporte
+  mes: string;
+  semana: string;
+  fechaRaw: string;
+  fechaIso: string;
+  fechaFormatted: string;
+  placa: string;
+  placaLower: string;
+  evidenciaInicialUrl: string;
+  mapaTallerUrl: string;
+  taller: string; // Normalized with trim
+  tallerLower: string;
+  llave: string;
+  contratista: string;
+}
+
+export interface LavadosSummary {
+  totalLavados: number;
+  mesActualLavados: number;
+  tallerMasUsado: { taller: string; count: number } | null;
+  byMes: { mes: string; count: number }[];
+  byTaller: { taller: string; count: number; pct: number }[];
+}
+
