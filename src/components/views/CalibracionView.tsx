@@ -27,11 +27,22 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { CalibracionRecord, CalibracionSummary } from '../../types';
+import {
+  CalibracionRecord,
+  CalibracionSummary,
+  ProcessCoverage,
+  UnmatchedRecordInfo
+} from '../../types';
 
 interface CalibracionViewProps {
   records: CalibracionRecord[];
   summary: CalibracionSummary;
+  fleetCoverage?: ProcessCoverage;
+  unmatchedInfo?: {
+    count: number;
+    uniquePlacas: number;
+    items: UnmatchedRecordInfo[];
+  };
   isLoading?: boolean;
   onRefresh?: () => void;
   lastUpdated?: string;
@@ -42,6 +53,8 @@ const CD_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b'];
 export const CalibracionView: React.FC<CalibracionViewProps> = ({
   records,
   summary,
+  fleetCoverage,
+  unmatchedInfo,
   isLoading = false,
   onRefresh,
   lastUpdated
@@ -50,8 +63,14 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
   const [selectedMes, setSelectedMes] = useState('all');
   const [selectedEstado, setSelectedEstado] = useState('all');
   const [selectedCd, setSelectedCd] = useState('all');
+  const [showOnlyFleetBase, setShowOnlyFleetBase] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
+
+  const fleetPlacasSet = useMemo(() => {
+    if (!fleetCoverage) return null;
+    return new Set([...fleetCoverage.placasEjecutadas, ...fleetCoverage.placasPendientes]);
+  }, [fleetCoverage]);
 
   // Options for filter selects
   const mesOptions = useMemo(() => {
@@ -73,6 +92,9 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
   // Filtered records
   const filteredRecords = useMemo(() => {
     return records.filter((r) => {
+      if (showOnlyFleetBase && fleetPlacasSet && !fleetPlacasSet.has(r.placa.trim().toUpperCase())) {
+        return false;
+      }
       if (searchPlaca.trim() && !r.placaLower.includes(searchPlaca.trim().toLowerCase())) {
         return false;
       }
@@ -87,7 +109,7 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
       }
       return true;
     });
-  }, [records, searchPlaca, selectedMes, selectedEstado, selectedCd]);
+  }, [records, searchPlaca, selectedMes, selectedEstado, selectedCd, showOnlyFleetBase, fleetPlacasSet]);
 
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / itemsPerPage));
@@ -101,6 +123,7 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
     setSelectedMes('all');
     setSelectedEstado('all');
     setSelectedCd('all');
+    setShowOnlyFleetBase(false);
     setCurrentPage(1);
   };
 
@@ -141,18 +164,81 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
         </div>
       </div>
 
-      {/* Critical Alert Notice if high pending count */}
-      {summary.pendientes > summary.completados && (
+      {/* Fleet Master Base Coverage Card (Crucial KPI) */}
+      {fleetCoverage && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-amber-950/30 border border-amber-500/40 shadow-xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white tracking-tight">
+                  Cobertura sobre la Flota Base Oficial ({fleetCoverage.totalFleet} Vehículos)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Medición rigurosa de calibraciones completadas contra el catálogo maestro de VEHÍCULOS.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-start sm:self-center">
+              <div className="text-right">
+                <span className="text-2xl font-black text-amber-400">
+                  {fleetCoverage.ejecutados} <span className="text-xs text-slate-400 font-normal">/ {fleetCoverage.totalFleet}</span>
+                </span>
+                <span className="block text-[11px] text-amber-300 font-bold">
+                  {fleetCoverage.pctEjecutado}% de la flota al día
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Segmented Progress Bar */}
+          <div className="space-y-1.5">
+            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden flex shadow-inner">
+              <div
+                className="bg-emerald-500 h-full transition-all duration-500 relative group"
+                style={{ width: `${fleetCoverage.pctEjecutado}%` }}
+                title={`Ejecutados: ${fleetCoverage.ejecutados} (${fleetCoverage.pctEjecutado}%)`}
+              />
+              <div
+                className="bg-amber-500 h-full transition-all duration-500 relative group"
+                style={{ width: `${fleetCoverage.pctPendiente}%` }}
+                title={`Pendientes: ${fleetCoverage.pendientes} (${fleetCoverage.pctPendiente}%)`}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                <span className="text-slate-300">
+                  <strong className="text-white">{fleetCoverage.ejecutados}</strong> Ejecutados ({fleetCoverage.pctEjecutado}%)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
+                <span className="text-slate-300">
+                  <strong className="text-white">{fleetCoverage.pendientes}</strong> Pendientes ({fleetCoverage.pctPendiente}%)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Dirty Data Notice */}
+      {unmatchedInfo && unmatchedInfo.uniquePlacas > 0 && (
         <div className="p-4 rounded-2xl bg-amber-950/30 border border-amber-500/30 flex items-start gap-3 shadow-md">
           <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
-            <ShieldAlert className="w-4 h-4" />
+            <AlertTriangle className="w-4 h-4" />
           </div>
           <div className="space-y-1">
             <h4 className="text-xs font-bold text-amber-300">
-              Alerta Operativa de Taller: {summary.pendientes} Calibraciones Pendientes ({summary.pctPendiente}%)
+              Aviso de Calidad de Datos: {unmatchedInfo.count} registros con placas fuera de la flota oficial ({unmatchedInfo.uniquePlacas} placas externas)
             </h4>
             <p className="text-xs text-slate-300 leading-relaxed">
-              Existe una brecha significativa con solo {summary.completados} calibraciones completadas ({summary.pctCompletado}%). Se recomienda priorizar el ingreso a taller de la flota asignada a Galapa y La Arenosa.
+              La hoja de Calibración registra placas que no pertenecen a la flota base oficial (ej. sedes alternas o placas antiguas). Para calcular la cobertura real se consideran exclusivamente las {fleetCoverage?.totalFleet || 50} placas del catálogo VEHICULOS.
             </p>
           </div>
         </div>
@@ -396,6 +482,23 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
 
           {/* Quick Filters */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {/* Solo Flota Oficial Toggle */}
+            {fleetCoverage && (
+              <button
+                onClick={() => {
+                  setShowOnlyFleetBase(!showOnlyFleetBase);
+                  setCurrentPage(1);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
+                  showOnlyFleetBase
+                    ? 'bg-blue-600 border-blue-500 text-white shadow'
+                    : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:text-white hover:bg-slate-700'
+                }`}
+              >
+                {showOnlyFleetBase ? '✓ Solo Flota Base (50)' : 'Filtrar Flota Base'}
+              </button>
+            )}
+
             {/* Search Placa */}
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />

@@ -34,7 +34,8 @@ import {
   calculateDisponibilidadSummary,
   parseVehiculosCsv,
   parseLavadosCsv,
-  calculateLavadosSummary
+  calculateLavadosSummary,
+  calculateFleetMasterCoverage
 } from './utils/dataProcessor';
 import { formatNowDateTimeEs } from './utils/dateUtils';
 import {
@@ -340,12 +341,15 @@ export default function App() {
     loadLavadosData
   ]);
 
-  // Initial load
+  // Initial load: load Check List, VEHICULOS (fleet base), CALIBRACION and LAVADOS for unified 360 coverage
   useEffect(() => {
     if (userSession) {
       loadCheckListData(false);
+      loadVehiculosData(false);
+      loadCalibracionData(false);
+      loadLavadosData(false);
     }
-  }, [userSession, loadCheckListData]);
+  }, [userSession, loadCheckListData, loadVehiculosData, loadCalibracionData, loadLavadosData]);
 
   // Login & Logout handlers
   const handleLoginSuccess = (session: UserSession) => {
@@ -366,6 +370,16 @@ export default function App() {
       console.error('Failed to clear session', e);
     }
   };
+
+  // Fleet Master Coverage (Central Source of Truth for Fleet Operations)
+  const fleetMasterSummary = useMemo(() => {
+    return calculateFleetMasterCoverage(
+      vehiculosRecords,
+      calibracionRecords,
+      lavadosRecords,
+      allRecords
+    );
+  }, [vehiculosRecords, calibracionRecords, lavadosRecords, allRecords]);
 
   // Derived summaries
   const calibracionSummary = useMemo(() => {
@@ -652,6 +666,8 @@ export default function App() {
                           onGroupingChange={(grp) =>
                             setFilters((prev) => ({ ...prev, trendGrouping: grp }))
                           }
+                          fleetSummary={fleetMasterSummary}
+                          onNavigateToView={(view) => setActiveModule(view)}
                         />
                       )}
 
@@ -692,6 +708,8 @@ export default function App() {
                 <CalibracionView
                   records={calibracionRecords}
                   summary={calibracionSummary}
+                  fleetCoverage={fleetMasterSummary.calibracionCoverage}
+                  unmatchedInfo={fleetMasterSummary.unmatchedCalibracion}
                   isLoading={isCalibracionLoading}
                   onRefresh={() => loadCalibracionData(true)}
                   lastUpdated={calibracionUpdated}
@@ -751,6 +769,7 @@ export default function App() {
               >
                 <VehiculosView
                   records={vehiculosRecords}
+                  fleetSummary={fleetMasterSummary}
                   isLoading={isVehiculosLoading}
                   onRefresh={() => loadVehiculosData(true)}
                   lastUpdated={vehiculosUpdated}
@@ -771,6 +790,8 @@ export default function App() {
                 <LavadosView
                   records={lavadosRecords}
                   summary={lavadosSummary}
+                  fleetCoverage={fleetMasterSummary.lavadosCoverage}
+                  unmatchedInfo={fleetMasterSummary.unmatchedLavados}
                   isLoading={isLavadosLoading}
                   onRefresh={() => loadLavadosData(true)}
                   lastUpdated={lavadosUpdated}

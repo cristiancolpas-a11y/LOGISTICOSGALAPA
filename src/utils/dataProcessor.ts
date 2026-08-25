@@ -20,7 +20,11 @@ import {
   DisponibilidadSummary,
   VehiculoRecord,
   LavadoRecord,
-  LavadosSummary
+  LavadosSummary,
+  FleetMasterSummary,
+  VehicleComplianceStatus,
+  ProcessCoverage,
+  UnmatchedRecordInfo
 } from '../types';
 import {
   parseAnyDateToIso,
@@ -1246,6 +1250,268 @@ export function calculateLavadosSummary(records: LavadoRecord[]): LavadosSummary
     tallerMasUsado,
     byMes,
     byTaller
+  };
+}
+
+// =========================================================================
+// PESTAÑA 4 & CRUCE MAESTRO: COBERTURA DE FLOTA (BASE VEHICULOS)
+// =========================================================================
+export function calculateFleetMasterCoverage(
+  fleetRecords: VehiculoRecord[],
+  calibracionRecords: CalibracionRecord[],
+  lavadosRecords: LavadoRecord[],
+  checkListRecords: NormalizedCheckListRecord[]
+): FleetMasterSummary {
+  // 1. Build map of Master Fleet vehicles (denominador oficial)
+  const fleetMap = new Map<string, VehiculoRecord>();
+  fleetRecords.forEach((v) => {
+    const p = (v.placa || '').trim().toUpperCase();
+    if (p) {
+      fleetMap.set(p, {
+        placa: p,
+        cd: v.cd || 'GALAPA',
+        contratista: v.contratista || 'Logisticos.co'
+      });
+    }
+  });
+
+  const totalVehiculos = fleetMap.size;
+
+  // 2. Map Calibraciones by Plate (only consider completed for execution)
+  const calibByPlaca = new Map<string, CalibracionRecord[]>();
+  const calibUnmatchedMap = new Map<string, { count: number; cd?: string; contratista?: string; taller?: string }>();
+
+  calibracionRecords.forEach((c) => {
+    const p = (c.placa || '').trim().toUpperCase();
+    if (!p) return;
+    if (fleetMap.has(p)) {
+      if (!calibByPlaca.has(p)) calibByPlaca.set(p, []);
+      calibByPlaca.get(p)!.push(c);
+    } else {
+      const existing = calibUnmatchedMap.get(p) || { count: 0, cd: c.cd, contratista: c.contratista, taller: c.taller };
+      existing.count += 1;
+      calibUnmatchedMap.set(p, existing);
+    }
+  });
+
+  // 3. Map Lavados by Plate
+  const lavadosByPlaca = new Map<string, LavadoRecord[]>();
+  const lavadosUnmatchedMap = new Map<string, { count: number; cd?: string; contratista?: string; taller?: string }>();
+
+  lavadosRecords.forEach((l) => {
+    const p = (l.placa || '').trim().toUpperCase();
+    if (!p) return;
+    if (fleetMap.has(p)) {
+      if (!lavadosByPlaca.has(p)) lavadosByPlaca.set(p, []);
+      lavadosByPlaca.get(p)!.push(l);
+    } else {
+      const existing = lavadosUnmatchedMap.get(p) || { count: 0, contratista: l.contratista, taller: l.taller };
+      existing.count += 1;
+      lavadosUnmatchedMap.set(p, existing);
+    }
+  });
+
+  // 4. Map Check List by Plate
+  const checkListByPlaca = new Map<string, NormalizedCheckListRecord[]>();
+  const checkListUnmatchedMap = new Map<string, { count: number }>();
+
+  checkListRecords.forEach((cl) => {
+    const p = (cl.vehicle || '').trim().toUpperCase();
+    if (!p) return;
+    if (fleetMap.has(p)) {
+      if (!checkListByPlaca.has(p)) checkListByPlaca.set(p, []);
+      checkListByPlaca.get(p)!.push(cl);
+    } else {
+      const existing = checkListUnmatchedMap.get(p) || { count: 0 };
+      existing.count += 1;
+      checkListUnmatchedMap.set(p, existing);
+    }
+  });
+
+  // 5. Build 360 Vehicle Compliance Statuses for every vehicle in fleetMap
+  const vehicleStatuses: VehicleComplianceStatus[] = [];
+  const calibEjecutadas: string[] = [];
+  const calibPendientes: string[] = [];
+  const lavadosEjecutadas: string[] = [];
+  const lavadosPendientes: string[] = [];
+  const checkListEjecutadas: string[] = [];
+  const checkListPendientes: string[] = [];
+
+  let fullyCompliantCount = 0;
+
+  fleetMap.forEach((vh, placa) => {
+    // Calibracion status: ONLY ESTADO === 'COMPLETADO' counts as executed
+    const calibs = calibByPlaca.get(placa) || [];
+    const completedCalib = calibs.find((c) => c.estado === 'COMPLETADO');
+    const latestCalib = calibs[0];
+    const isCalibCompliant = !!completedCalib;
+    const calibStatus: 'COMPLETADO' | 'PENDIENTE' | 'NO_REGISTRO' = isCalibCompliant
+      ? 'COMPLETADO'
+      : calibs.length > 0
+      ? 'PENDIENTE'
+      : 'NO_REGISTRO';
+
+    if (isCalibCompliant) {
+      calibEjecutadas.push(placa);
+    } else {
+      calibPendientes.push(placa);
+    }
+
+    // Lavado status: presence in LAVADOS sheet counts as executed
+    const lavs = lavadosByPlaca.get(placa) || [];
+    const isLavadoCompliant = lavs.length > 0;
+    const latestLavado = lavs[0];
+
+    if (isLavadoCompliant) {
+      lavadosEjecutadas.push(placa);
+    } else {
+      lavadosPendientes.push(placa);
+    }
+
+    // Check List status: presence in Check list sheet
+    const cls = checkListByPlaca.get(placa) || [];
+    const isCheckListCompliant = cls.length > 0;
+    const salidaCount = cls.reduce((sum, c) => sum + (c.salida || 0), 0);
+    const retornoCount = cls.reduce((sum, c) => sum + (c.retorno || 0), 0);
+    const hasAlerts = cls.some((c) => c.severity === 'CRITICO' || c.severity === 'ALTO');
+    const latestCl = cls[0];
+
+    if (isCheckListCompliant) {
+      checkListEjecutadas.push(placa);
+    } else {
+      checkListPendientes.push(placa);
+    }
+
+    // Overall Compliance Score (out of 3 processes)
+    let score = 0;
+    if (isCalibCompliant) score++;
+    if (isLavadoCompliant) score++;
+    if (isCheckListCompliant) score++;
+
+    const isFully = score === 3;
+    if (isFully) fullyCompliantCount++;
+
+    vehicleStatuses.push({
+      placa,
+      cd: vh.cd,
+      contratista: vh.contratista,
+      calibracion: {
+        status: calibStatus,
+        isCompliant: isCalibCompliant,
+        count: calibs.length,
+        lastDate: completedCalib?.fechaFormatted || latestCalib?.fechaFormatted,
+        lastTaller: completedCalib?.taller || latestCalib?.taller,
+        fotoUrl: completedCalib?.fotoEvidenciaUrl || latestCalib?.fotoEvidenciaUrl,
+        mes: completedCalib?.mes || latestCalib?.mes
+      },
+      lavado: {
+        isCompliant: isLavadoCompliant,
+        count: lavs.length,
+        lastDate: latestLavado?.fechaFormatted,
+        lastTaller: latestLavado?.taller,
+        fotoUrl: latestLavado?.evidenciaInicialUrl,
+        mes: latestLavado?.mes
+      },
+      checkList: {
+        isCompliant: isCheckListCompliant,
+        totalCount: cls.length,
+        salidaCount,
+        retornoCount,
+        lastDate: latestCl?.dateFormatted,
+        hasAlerts
+      },
+      complianceScore: score,
+      compliancePct: Math.round((score / 3) * 100),
+      isFullyCompliant: isFully,
+      hasAnyPending: !isFully
+    });
+  });
+
+  // Sort vehicle statuses alphabetically by placa
+  vehicleStatuses.sort((a, b) => a.placa.localeCompare(b.placa));
+
+  const total = Math.max(1, totalVehiculos);
+
+  const calibracionCoverage: ProcessCoverage = {
+    totalFleet: totalVehiculos,
+    ejecutados: calibEjecutadas.length,
+    pendientes: calibPendientes.length,
+    pctEjecutado: totalVehiculos > 0 ? Number(((calibEjecutadas.length / total) * 100).toFixed(1)) : 0,
+    pctPendiente: totalVehiculos > 0 ? Number(((calibPendientes.length / total) * 100).toFixed(1)) : 0,
+    placasEjecutadas: calibEjecutadas,
+    placasPendientes: calibPendientes
+  };
+
+  const lavadosCoverage: ProcessCoverage = {
+    totalFleet: totalVehiculos,
+    ejecutados: lavadosEjecutadas.length,
+    pendientes: lavadosPendientes.length,
+    pctEjecutado: totalVehiculos > 0 ? Number(((lavadosEjecutadas.length / total) * 100).toFixed(1)) : 0,
+    pctPendiente: totalVehiculos > 0 ? Number(((lavadosPendientes.length / total) * 100).toFixed(1)) : 0,
+    placasEjecutadas: lavadosEjecutadas,
+    placasPendientes: lavadosPendientes
+  };
+
+  const checkListCoverage: ProcessCoverage = {
+    totalFleet: totalVehiculos,
+    ejecutados: checkListEjecutadas.length,
+    pendientes: checkListPendientes.length,
+    pctEjecutado: totalVehiculos > 0 ? Number(((checkListEjecutadas.length / total) * 100).toFixed(1)) : 0,
+    pctPendiente: totalVehiculos > 0 ? Number(((checkListPendientes.length / total) * 100).toFixed(1)) : 0,
+    placasEjecutadas: checkListEjecutadas,
+    placasPendientes: checkListPendientes
+  };
+
+  // Convert unmatched maps to list
+  const unmatchedCalibracionItems: UnmatchedRecordInfo[] = Array.from(calibUnmatchedMap.entries()).map(([placa, data]) => ({
+    placa,
+    count: data.count,
+    cd: data.cd,
+    contratista: data.contratista,
+    taller: data.taller,
+    sourceSheet: 'CALIBRACION'
+  })).sort((a, b) => b.count - a.count);
+
+  const unmatchedLavadosItems: UnmatchedRecordInfo[] = Array.from(lavadosUnmatchedMap.entries()).map(([placa, data]) => ({
+    placa,
+    count: data.count,
+    cd: data.cd,
+    contratista: data.contratista,
+    taller: data.taller,
+    sourceSheet: 'LAVADOS'
+  })).sort((a, b) => b.count - a.count);
+
+  const unmatchedCheckListItems: UnmatchedRecordInfo[] = Array.from(checkListUnmatchedMap.entries()).map(([placa, data]) => ({
+    placa,
+    count: data.count,
+    sourceSheet: 'Check list'
+  })).sort((a, b) => b.count - a.count);
+
+  return {
+    totalVehiculos,
+    fullyCompliantCount,
+    fullyCompliantPct: totalVehiculos > 0 ? Number(((fullyCompliantCount / total) * 100).toFixed(1)) : 0,
+    withPendingCount: totalVehiculos - fullyCompliantCount,
+    withPendingPct: totalVehiculos > 0 ? Number((((totalVehiculos - fullyCompliantCount) / total) * 100).toFixed(1)) : 0,
+    calibracionCoverage,
+    lavadosCoverage,
+    checkListCoverage,
+    vehicleStatuses,
+    unmatchedCalibracion: {
+      count: unmatchedCalibracionItems.reduce((acc, item) => acc + item.count, 0),
+      uniquePlacas: unmatchedCalibracionItems.length,
+      items: unmatchedCalibracionItems
+    },
+    unmatchedLavados: {
+      count: unmatchedLavadosItems.reduce((acc, item) => acc + item.count, 0),
+      uniquePlacas: unmatchedLavadosItems.length,
+      items: unmatchedLavadosItems
+    },
+    unmatchedCheckList: {
+      count: unmatchedCheckListItems.reduce((acc, item) => acc + item.count, 0),
+      uniquePlacas: unmatchedCheckListItems.length,
+      items: unmatchedCheckListItems
+    }
   };
 }
 

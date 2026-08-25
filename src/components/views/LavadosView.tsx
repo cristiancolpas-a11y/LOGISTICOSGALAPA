@@ -24,11 +24,17 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { LavadoRecord, LavadosSummary } from '../../types';
+import { LavadoRecord, LavadosSummary, ProcessCoverage, UnmatchedRecordInfo } from '../../types';
 
 interface LavadosViewProps {
   records: LavadoRecord[];
   summary: LavadosSummary;
+  fleetCoverage?: ProcessCoverage;
+  unmatchedInfo?: {
+    count: number;
+    uniquePlacas: number;
+    items: UnmatchedRecordInfo[];
+  };
   isLoading?: boolean;
   onRefresh?: () => void;
   lastUpdated?: string;
@@ -39,6 +45,8 @@ const TALLER_COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#
 export const LavadosView: React.FC<LavadosViewProps> = ({
   records,
   summary,
+  fleetCoverage,
+  unmatchedInfo,
   isLoading = false,
   onRefresh,
   lastUpdated
@@ -46,8 +54,14 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
   const [searchPlaca, setSearchPlaca] = useState('');
   const [selectedMes, setSelectedMes] = useState('all');
   const [selectedTaller, setSelectedTaller] = useState('all');
+  const [showOnlyFleetBase, setShowOnlyFleetBase] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 15;
+
+  const fleetPlacasSet = useMemo(() => {
+    if (!fleetCoverage) return null;
+    return new Set([...fleetCoverage.placasEjecutadas, ...fleetCoverage.placasPendientes]);
+  }, [fleetCoverage]);
 
   const mesOptions = useMemo(() => {
     const set = new Set<string>();
@@ -67,6 +81,9 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
 
   const filteredRecords = useMemo(() => {
     return records.filter((r) => {
+      if (showOnlyFleetBase && fleetPlacasSet && !fleetPlacasSet.has(r.placa.trim().toUpperCase())) {
+        return false;
+      }
       if (searchPlaca.trim() && !r.placaLower.includes(searchPlaca.trim().toLowerCase())) {
         return false;
       }
@@ -78,7 +95,7 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
       }
       return true;
     });
-  }, [records, searchPlaca, selectedMes, selectedTaller]);
+  }, [records, searchPlaca, selectedMes, selectedTaller, showOnlyFleetBase, fleetPlacasSet]);
 
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / itemsPerPage));
   const paginatedRecords = useMemo(() => {
@@ -122,6 +139,67 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Fleet Master Base Coverage Card for Lavados */}
+      {fleetCoverage && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-cyan-950/30 border border-cyan-500/40 shadow-xl space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-white tracking-tight">
+                  Cobertura de Lavados sobre Flota Base Oficial ({fleetCoverage.totalFleet} Vehículos)
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Unidades de la base VEHICULOS que cuentan con registro de lavado en el período.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 self-start sm:self-center">
+              <div className="text-right">
+                <span className="text-2xl font-black text-cyan-400">
+                  {fleetCoverage.ejecutados} <span className="text-xs text-slate-400 font-normal">/ {fleetCoverage.totalFleet}</span>
+                </span>
+                <span className="block text-[11px] text-cyan-300 font-bold">
+                  {fleetCoverage.pctEjecutado}% de la flota con lavado
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Segmented Progress Bar */}
+          <div className="space-y-1.5">
+            <div className="w-full bg-slate-800 h-3 rounded-full overflow-hidden flex shadow-inner">
+              <div
+                className="bg-cyan-500 h-full transition-all duration-500"
+                style={{ width: `${fleetCoverage.pctEjecutado}%` }}
+              />
+              <div
+                className="bg-slate-700 h-full transition-all duration-500"
+                style={{ width: `${fleetCoverage.pctPendiente}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-500" />
+                <span className="text-slate-300">
+                  <strong className="text-white">{fleetCoverage.ejecutados}</strong> Vehículos Lavados ({fleetCoverage.pctEjecutado}%)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-500" />
+                <span className="text-slate-300">
+                  <strong className="text-white">{fleetCoverage.pendientes}</strong> Sin Lavado ({fleetCoverage.pctPendiente}%)
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" id="lavados-kpis">

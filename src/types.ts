@@ -279,3 +279,87 @@ export interface LavadosSummary {
   byTaller: { taller: string; count: number; pct: number }[];
 }
 
+// ==========================================
+// CRUCE MAESTRO DE COBERTURA DE FLOTA (BASE VEHICULOS)
+// ==========================================
+export interface ProcessCoverage {
+  totalFleet: number;
+  ejecutados: number;
+  pendientes: number;
+  pctEjecutado: number;
+  pctPendiente: number;
+  placasEjecutadas: string[];
+  placasPendientes: string[];
+}
+
+export interface UnmatchedRecordInfo {
+  placa: string;
+  count: number;
+  cd?: string;
+  contratista?: string;
+  taller?: string;
+  sourceSheet: string;
+}
+
+export interface VehicleComplianceStatus {
+  placa: string;
+  cd: string;
+  contratista: string;
+  calibracion: {
+    status: 'COMPLETADO' | 'PENDIENTE' | 'NO_REGISTRO';
+    isCompliant: boolean;
+    count: number;
+    lastDate?: string;
+    lastTaller?: string;
+    fotoUrl?: string;
+    mes?: string;
+  };
+  lavado: {
+    isCompliant: boolean;
+    count: number;
+    lastDate?: string;
+    lastTaller?: string;
+    fotoUrl?: string;
+    mes?: string;
+  };
+  checkList: {
+    isCompliant: boolean;
+    totalCount: number;
+    salidaCount: number;
+    retornoCount: number;
+    lastDate?: string;
+    hasAlerts: boolean;
+  };
+  complianceScore: number; // 0 to 3
+  compliancePct: number; // 0 to 100%
+  isFullyCompliant: boolean;
+  hasAnyPending: boolean;
+}
+
+export interface FleetMasterSummary {
+  totalVehiculos: number;
+  fullyCompliantCount: number;
+  fullyCompliantPct: number;
+  withPendingCount: number;
+  withPendingPct: number;
+  calibracionCoverage: ProcessCoverage;
+  lavadosCoverage: ProcessCoverage;
+  checkListCoverage: ProcessCoverage;
+  vehicleStatuses: VehicleComplianceStatus[];
+  unmatchedCalibracion: {
+    count: number;
+    uniquePlacas: number;
+    items: UnmatchedRecordInfo[];
+  };
+  unmatchedLavados: {
+    count: number;
+    uniquePlacas: number;
+    items: UnmatchedRecordInfo[];
+  };
+  unmatchedCheckList: {
+    count: number;
+    uniquePlacas: number;
+    items: UnmatchedRecordInfo[];
+  };
+}
+
