@@ -708,6 +708,7 @@ export default function App() {
                 <CalibracionView
                   records={calibracionRecords}
                   summary={calibracionSummary}
+                  fleetRecords={vehiculosRecords}
                   fleetCoverage={fleetMasterSummary.calibracionCoverage}
                   unmatchedInfo={fleetMasterSummary.unmatchedCalibracion}
                   isLoading={isCalibracionLoading}
@@ -790,6 +791,7 @@ export default function App() {
                 <LavadosView
                   records={lavadosRecords}
                   summary={lavadosSummary}
+                  fleetRecords={vehiculosRecords}
                   fleetCoverage={fleetMasterSummary.lavadosCoverage}
                   unmatchedInfo={fleetMasterSummary.unmatchedLavados}
                   isLoading={isLavadosLoading}

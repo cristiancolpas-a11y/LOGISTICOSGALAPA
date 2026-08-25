@@ -24,7 +24,9 @@ import {
   FleetMasterSummary,
   VehicleComplianceStatus,
   ProcessCoverage,
-  UnmatchedRecordInfo
+  UnmatchedRecordInfo,
+  MonthProgressData,
+  MonthlyProgressSummary
 } from '../types';
 import {
   parseAnyDateToIso,
@@ -1250,6 +1252,139 @@ export function calculateLavadosSummary(records: LavadoRecord[]): LavadosSummary
     tallerMasUsado,
     byMes,
     byTaller
+  };
+}
+
+// =========================================================================
+// CRUCE MENSUAL FLOTA BASE: DEL MES (FOTO) VS ACUMULADO (HASTA EL MES)
+// =========================================================================
+export const CHRONOLOGICAL_MONTH_ORDER = [
+  'ENERO',
+  'FEBRERO',
+  'MARZO',
+  'ABRIL',
+  'MAYO',
+  'JUNIO',
+  'JULIO',
+  'AGOSTO',
+  'SEPTIEMBRE',
+  'OCTUBRE',
+  'NOVIEMBRE',
+  'DICIEMBRE'
+];
+
+/**
+ * Calculates monthly snapshot ('del mes') and cumulative ('acumulado') execution vs pending
+ * strictly against the official Master Fleet ('VEHICULOS').
+ *
+ * @param fleetRecords Master Fleet records (from VEHICULOS)
+ * @param processRecords Records from Calibracion or Lavados
+ * @param isValidRecord Predicate function to check if record is valid (e.g. ESTADO === 'COMPLETADO' for Calibracion)
+ * @param forcedMonths Optional list of months to guarantee in timeline
+ */
+export function calculateMonthlyFleetProgress<T extends { mes: string; placa: string }>(
+  fleetRecords: VehiculoRecord[] = [],
+  processRecords: T[] = [],
+  isValidRecord: (r: T) => boolean = () => true,
+  forcedMonths?: string[]
+): MonthlyProgressSummary {
+  // 1. Base fleet plates normalized with trim & uppercase
+  const fleetPlacasSet = new Set<string>();
+  fleetRecords.forEach((v) => {
+    const p = (v.placa || '').trim().toUpperCase();
+    if (p) fleetPlacasSet.add(p);
+  });
+
+  const totalFleet = fleetPlacasSet.size;
+  const allFleetPlacas = Array.from(fleetPlacasSet).sort();
+
+  // 2. Discover months present in records or forced list
+  const recordedMonthsSet = new Set<string>();
+  processRecords.forEach((r) => {
+    const m = (r.mes || '').trim().toUpperCase();
+    if (m && m !== 'SIN MES' && m !== 'OTRO' && m !== 'N/A') {
+      recordedMonthsSet.add(m);
+    }
+  });
+
+  if (forcedMonths && forcedMonths.length > 0) {
+    forcedMonths.forEach((m) => {
+      const nm = (m || '').trim().toUpperCase();
+      if (nm) recordedMonthsSet.add(nm);
+    });
+  }
+
+  // Chronological sort
+  const sortedMonths = Array.from(recordedMonthsSet).sort((a, b) => {
+    const idxA = CHRONOLOGICAL_MONTH_ORDER.indexOf(a);
+    const idxB = CHRONOLOGICAL_MONTH_ORDER.indexOf(b);
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  // 3. Process month by month with cumulative Set
+  const cumulativePlacasSet = new Set<string>();
+  const months: MonthProgressData[] = [];
+  const byMes: Record<string, MonthProgressData> = {};
+
+  sortedMonths.forEach((mes) => {
+    // Unique base fleet plates that executed the process in THIS month
+    const delMesSet = new Set<string>();
+
+    processRecords.forEach((r) => {
+      const m = (r.mes || '').trim().toUpperCase();
+      if (m === mes && isValidRecord(r)) {
+        const p = (r.placa || '').trim().toUpperCase();
+        if (fleetPlacasSet.has(p)) {
+          delMesSet.add(p);
+        }
+      }
+    });
+
+    const delMesEjecutados = delMesSet.size;
+    const delMesPendientes = Math.max(0, totalFleet - delMesEjecutados);
+    const delMesPctEjecutado = totalFleet > 0 ? Number(((delMesEjecutados / totalFleet) * 100).toFixed(1)) : 0;
+    const delMesPctPendiente = totalFleet > 0 ? Number(((delMesPendientes / totalFleet) * 100).toFixed(1)) : 0;
+    const delMesPlacasEjecutadas = Array.from(delMesSet).sort();
+    const delMesPlacasPendientes = allFleetPlacas.filter((p) => !delMesSet.has(p));
+
+    // Union into cumulative
+    delMesSet.forEach((p) => cumulativePlacasSet.add(p));
+
+    const acumuladoHechos = cumulativePlacasSet.size;
+    const acumuladoFaltan = Math.max(0, totalFleet - acumuladoHechos);
+    const acumuladoPctHechos = totalFleet > 0 ? Number(((acumuladoHechos / totalFleet) * 100).toFixed(1)) : 0;
+    const acumuladoPctFaltan = totalFleet > 0 ? Number(((acumuladoFaltan / totalFleet) * 100).toFixed(1)) : 0;
+    const acumuladoPlacasHechos = Array.from(cumulativePlacasSet).sort();
+    const acumuladoPlacasFaltan = allFleetPlacas.filter((p) => !cumulativePlacasSet.has(p));
+
+    const monthData: MonthProgressData = {
+      mes,
+      delMesEjecutados,
+      delMesPendientes,
+      delMesPctEjecutado,
+      delMesPctPendiente,
+      delMesPlacasEjecutadas,
+      delMesPlacasPendientes,
+      acumuladoHechos,
+      acumuladoFaltan,
+      acumuladoPctHechos,
+      acumuladoPctFaltan,
+      acumuladoPlacasHechos,
+      acumuladoPlacasFaltan
+    };
+
+    months.push(monthData);
+    byMes[mes] = monthData;
+  });
+
+  return {
+    totalFleet,
+    allFleetPlacas,
+    months,
+    byMes
   };
 }
 

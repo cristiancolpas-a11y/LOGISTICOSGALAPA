@@ -282,6 +282,31 @@ export interface LavadosSummary {
 // ==========================================
 // CRUCE MAESTRO DE COBERTURA DE FLOTA (BASE VEHICULOS)
 // ==========================================
+export interface MonthProgressData {
+  mes: string;
+  // Del mes (foto mensual de la flota base)
+  delMesEjecutados: number;
+  delMesPendientes: number;
+  delMesPctEjecutado: number;
+  delMesPctPendiente: number;
+  delMesPlacasEjecutadas: string[];
+  delMesPlacasPendientes: string[];
+  // Acumulado (unión acumulada hasta ese mes de la flota base)
+  acumuladoHechos: number;
+  acumuladoFaltan: number;
+  acumuladoPctHechos: number;
+  acumuladoPctFaltan: number;
+  acumuladoPlacasHechos: string[];
+  acumuladoPlacasFaltan: string[];
+}
+
+export interface MonthlyProgressSummary {
+  totalFleet: number;
+  allFleetPlacas: string[];
+  months: MonthProgressData[];
+  byMes: Record<string, MonthProgressData>;
+}
+
 export interface ProcessCoverage {
   totalFleet: number;
   ejecutados: number;
