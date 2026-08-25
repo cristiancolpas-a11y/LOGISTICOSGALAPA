@@ -27,7 +27,10 @@ import {
   CartesianGrid,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  LabelList,
+  Line,
+  ComposedChart
 } from 'recharts';
 import {
   CalibracionRecord,
@@ -144,6 +147,26 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
       acumuladoPctHechos: m.acumuladoPctHechos
     }));
   }, [monthlyProgress]);
+
+  // Distribution by Status (Completado vs Pendiente)
+  const estadoPieData = useMemo(() => {
+    return [
+      { name: 'Completado', value: summary.completados, color: '#10b981' },
+      { name: 'Pendiente', value: summary.pendientes, color: '#f59e0b' }
+    ].filter((item) => item.value > 0);
+  }, [summary.completados, summary.pendientes]);
+
+  // Distribution by CD (GALAPA vs LA ARENOSA)
+  const cdPieData = useMemo(() => {
+    return summary.byCd.map((cdItem, idx) => ({
+      name: cdItem.cd,
+      value: cdItem.total,
+      completados: cdItem.completados,
+      pendientes: cdItem.pendientes,
+      pctCompletado: cdItem.pctCompletado,
+      color: CD_COLORS[idx % CD_COLORS.length]
+    }));
+  }, [summary.byCd]);
 
   // 4. Pending fleet vehicles to display in the management table
   const pendingPlacasList = useMemo(() => {
@@ -518,6 +541,454 @@ export const CalibracionView: React.FC<CalibracionViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Top 3 KPI Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4" id="calibracion-kpis">
+        {/* KPI 1: Total Registros */}
+        <div className="p-4 rounded-2xl border border-amber-500/30 bg-gradient-to-b from-amber-950/20 to-slate-900 shadow-lg">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-bold tracking-wider text-amber-300 uppercase">
+              TOTAL REGISTROS CALIBRACIÓN
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <Wrench className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="text-3xl font-black tracking-tight text-white">
+              {summary.total.toLocaleString()}
+            </span>
+            <span className="text-xs text-slate-400 font-medium">registros</span>
+          </div>
+          <div className="text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
+            Registro total en sistema 2026
+          </div>
+        </div>
+
+        {/* KPI 2: Calibraciones Completadas */}
+        <div className="p-4 rounded-2xl border border-emerald-500/30 bg-slate-900/90 shadow-lg">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-bold tracking-wider text-emerald-300 uppercase">
+              CALIBRACIONES COMPLETADAS
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="text-3xl font-black tracking-tight text-emerald-400">
+              {summary.completados}
+            </span>
+            <span className="text-xs text-emerald-400 font-semibold font-mono">
+              ({summary.pctCompletado}%)
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
+            Servicios técnicos aprobados con foto
+          </div>
+        </div>
+
+        {/* KPI 3: Calibraciones Pendientes */}
+        <div className="p-4 rounded-2xl border border-amber-500/30 bg-slate-900/90 shadow-lg">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="text-[11px] font-bold tracking-wider text-amber-300 uppercase">
+              CALIBRACIONES PENDIENTES
+            </span>
+            <div className="w-7 h-7 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+              <Clock className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="flex items-baseline gap-2 mb-1">
+            <span className="text-3xl font-black tracking-tight text-amber-400">
+              {summary.pendientes}
+            </span>
+            <span className="text-xs text-amber-400 font-semibold font-mono">
+              ({summary.pctPendiente}%)
+            </span>
+          </div>
+          <div className="text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
+            Unidades en espera de calibración
+          </div>
+        </div>
+      </div>
+
+      {/* Visual Charts Dashboard Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6" id="calibracion-charts">
+        {/* Chart 1: Calibraciones Completadas vs Pendientes por Mes (7 cols) */}
+        <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-white tracking-tight">
+              Calibraciones del Mes: Completadas vs Pendientes (Flota Base {monthlyProgress.totalFleet})
+            </h3>
+            <p className="text-xs text-slate-400">
+              Seguimiento mensual de servicios ejecutados vs pendientes sobre la flota oficial
+            </p>
+          </div>
+
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={monthlyChartData} margin={{ top: 25, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis
+                  dataKey="mes"
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#334155' }}
+                />
+                <YAxis
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#334155' }}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-xl text-xs space-y-1.5">
+                          <div className="font-bold text-white border-b border-slate-700 pb-1">
+                            {label} (Flota: {monthlyProgress.totalFleet})
+                          </div>
+                          <div className="text-emerald-400">
+                            <strong>Del mes:</strong> {data.completados} completados / {data.pendientes} pendientes ({data.delMesPctEjecutado}%)
+                          </div>
+                          <div className="text-blue-400">
+                            <strong>Acumulado:</strong> {data.acumuladoHechos} hechos / {data.acumuladoFaltan} faltan ({data.acumuladoPctHechos}%)
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                  cursor={{ fill: 'rgba(51, 65, 85, 0.2)' }}
+                />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  iconType="circle"
+                  wrapperStyle={{ paddingBottom: '12px', fontSize: '11px' }}
+                />
+                <Bar
+                  dataKey="completados"
+                  name="Completadas del Mes"
+                  fill="#10b981"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={38}
+                >
+                  <LabelList
+                    dataKey="completados"
+                    position="top"
+                    fill="#e2e8f0"
+                    fontSize={11}
+                    fontWeight={600}
+                    formatter={(val: any) => (Number(val) > 0 ? val : '')}
+                  />
+                </Bar>
+                <Bar
+                  dataKey="pendientes"
+                  name="Pendientes del Mes"
+                  fill="#f59e0b"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={38}
+                >
+                  <LabelList
+                    dataKey="pendientes"
+                    position="top"
+                    fill="#fcd34d"
+                    fontSize={11}
+                    fontWeight={600}
+                    formatter={(val: any) => (Number(val) > 0 ? val : '')}
+                  />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Chart 2: Distribución por Estado General (5 cols) */}
+        <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-white tracking-tight mb-1">
+              Distribución por Estado
+            </h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Proporción global de calibraciones completadas vs pendientes
+            </p>
+          </div>
+
+          <div className="h-48 w-full relative flex items-center justify-center">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={estadoPieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={38}
+                  outerRadius={60}
+                  paddingAngle={4}
+                  label={({ cx, cy, midAngle, outerRadius, percent, name, value }: any) => {
+                    if (!value || value === 0) return null;
+                    const RADIAN = Math.PI / 180;
+                    const radius = outerRadius + 14;
+                    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                    const pct = Math.round((percent || 0) * 100);
+                    return (
+                      <text
+                        x={x}
+                        y={y}
+                        fill="#e2e8f0"
+                        textAnchor={x > cx ? 'start' : 'end'}
+                        dominantBaseline="central"
+                        fontSize={10}
+                        fontWeight={600}
+                      >
+                        {`${name}: ${value} (${pct}%)`}
+                      </text>
+                    );
+                  }}
+                  labelLine={{ stroke: '#475569', strokeWidth: 1 }}
+                >
+                  {estadoPieData.map((entry) => (
+                    <Cell key={`estado-${entry.name}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '12px',
+                    fontSize: '12px'
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-slate-800">
+            {estadoPieData.map((item) => (
+              <div key={item.name} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: item.color }}
+                  />
+                  <span className="font-semibold text-slate-200">
+                    {item.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-400 font-mono">
+                  <span>{item.value} registros</span>
+                  <span className="font-bold text-white font-sans">
+                    ({summary.total > 0 ? Math.round((item.value / summary.total) * 100) : 0}%)
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Chart 3: Evolución del Acumulado de Flota Calibrada (% y Unidades) (7 cols) */}
+        <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+          <div className="mb-4">
+            <h3 className="text-sm font-bold text-white tracking-tight">
+              Evolución Acumulada de Flota Calibrada (% de Cobertura)
+            </h3>
+            <p className="text-xs text-slate-400">
+              Avance acumulado mes a mes sobre la flota base oficial ({monthlyProgress.totalFleet} vehículos)
+            </p>
+          </div>
+
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart data={monthlyChartData} margin={{ top: 25, right: 20, left: -15, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                <XAxis
+                  dataKey="mes"
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#334155' }}
+                />
+                <YAxis
+                  yAxisId="left"
+                  stroke="#64748b"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#334155' }}
+                />
+                <YAxis
+                  yAxisId="right"
+                  orientation="right"
+                  domain={[0, 100]}
+                  unit="%"
+                  stroke="#10b981"
+                  fontSize={11}
+                  tickLine={false}
+                  axisLine={{ stroke: '#10b981' }}
+                />
+                <Tooltip
+                  content={({ active, payload, label }) => {
+                    if (active && payload && payload.length) {
+                      const data = payload[0].payload;
+                      return (
+                        <div className="p-3 bg-slate-900 border border-slate-700 rounded-xl shadow-xl text-xs space-y-1.5">
+                          <div className="font-bold text-white border-b border-slate-700 pb-1">
+                            {label} (Corte Acumulado)
+                          </div>
+                          <div className="text-blue-400">
+                            <strong>Flota Calibrada:</strong> {data.acumuladoHechos} / {monthlyProgress.totalFleet} vehículos
+                          </div>
+                          <div className="text-emerald-400 font-bold">
+                            <strong>Cobertura Acumulada:</strong> {data.acumuladoPctHechos}%
+                          </div>
+                          <div className="text-amber-400">
+                            <strong>Faltan por Calibrar:</strong> {data.acumuladoFaltan} unidades
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                  cursor={{ fill: 'rgba(51, 65, 85, 0.2)' }}
+                />
+                <Legend
+                  verticalAlign="top"
+                  align="right"
+                  iconType="circle"
+                  wrapperStyle={{ paddingBottom: '12px', fontSize: '11px' }}
+                />
+                <Bar
+                  yAxisId="left"
+                  dataKey="acumuladoHechos"
+                  name="Vehículos Acumulados"
+                  fill="#3b82f6"
+                  radius={[4, 4, 0, 0]}
+                  maxBarSize={38}
+                >
+                  <LabelList
+                    dataKey="acumuladoHechos"
+                    position="top"
+                    fill="#bfdbfe"
+                    fontSize={11}
+                    fontWeight={600}
+                    formatter={(val: any) => (Number(val) > 0 ? `${val} vh` : '')}
+                  />
+                </Bar>
+                <Line
+                  yAxisId="right"
+                  type="monotone"
+                  dataKey="acumuladoPctHechos"
+                  name="% Cobertura Acumulada"
+                  stroke="#10b981"
+                  strokeWidth={3}
+                  dot={{ r: 5, fill: '#10b981', stroke: '#0f172a', strokeWidth: 2 }}
+                  activeDot={{ r: 7 }}
+                >
+                  <LabelList
+                    dataKey="acumuladoPctHechos"
+                    position="top"
+                    fill="#6ee7b7"
+                    fontSize={11}
+                    fontWeight={700}
+                    offset={12}
+                    formatter={(val: any) => `${val}%`}
+                  />
+                </Line>
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Chart 4: Distribución por Centro de Distribución (CD) (5 cols) */}
+        <div className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-white tracking-tight mb-1">
+              Distribución por Centro (CD)
+            </h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Calibraciones registradas por sede operativa
+            </p>
+          </div>
+
+          <div className="h-48 w-full relative flex items-center justify-center">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={cdPieData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={38}
+                  outerRadius={60}
+                  paddingAngle={4}
+                  label={({ cx, cy, midAngle, outerRadius, percent, name, value }: any) => {
+                    if (!value || value === 0) return null;
+                    const RADIAN = Math.PI / 180;
+                    const radius = outerRadius + 14;
+                    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                    const pct = Math.round((percent || 0) * 100);
+                    return (
+                      <text
+                        x={x}
+                        y={y}
+                        fill="#e2e8f0"
+                        textAnchor={x > cx ? 'start' : 'end'}
+                        dominantBaseline="central"
+                        fontSize={10}
+                        fontWeight={600}
+                      >
+                        {`${name}: ${value} (${pct}%)`}
+                      </text>
+                    );
+                  }}
+                  labelLine={{ stroke: '#475569', strokeWidth: 1 }}
+                >
+                  {cdPieData.map((entry) => (
+                    <Cell key={`cd-${entry.name}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#0f172a',
+                    border: '1px solid #334155',
+                    borderRadius: '12px',
+                    fontSize: '12px'
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="space-y-2 pt-3 border-t border-slate-800">
+            {cdPieData.map((cdItem) => (
+              <div key={cdItem.name} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <div
+                    className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: cdItem.color }}
+                  />
+                  <span className="font-semibold text-slate-200">
+                    {cdItem.name}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 text-slate-400 font-mono">
+                  <span>{cdItem.value} registros</span>
+                  <span className="text-emerald-400 font-semibold font-sans">
+                    ({cdItem.pctCompletado}% completado)
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Filterable Table Section */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-lg space-y-4">

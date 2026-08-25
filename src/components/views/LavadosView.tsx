@@ -27,7 +27,8 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend
+  Legend,
+  LabelList
 } from 'recharts';
 import {
   LavadoRecord,
@@ -595,7 +596,7 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
 
           <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyChartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={monthlyChartData} margin={{ top: 25, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
                 <XAxis
                   dataKey="mes"
@@ -644,14 +645,32 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
                   fill="#06b6d4"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={38}
-                />
+                >
+                  <LabelList
+                    dataKey="ejecutados"
+                    position="top"
+                    fill="#e2e8f0"
+                    fontSize={11}
+                    fontWeight={600}
+                    formatter={(val: any) => (Number(val) > 0 ? val : '')}
+                  />
+                </Bar>
                 <Bar
                   dataKey="pendientes"
                   name="Pendientes del Mes"
                   fill="#f59e0b"
                   radius={[4, 4, 0, 0]}
                   maxBarSize={38}
-                />
+                >
+                  <LabelList
+                    dataKey="pendientes"
+                    position="top"
+                    fill="#fcd34d"
+                    fontSize={11}
+                    fontWeight={600}
+                    formatter={(val: any) => (Number(val) > 0 ? val : '')}
+                  />
+                </Bar>
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -668,7 +687,7 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
             </p>
           </div>
 
-          <div className="h-44 w-full relative flex items-center justify-center">
+          <div className="h-48 w-full relative flex items-center justify-center">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
@@ -677,9 +696,31 @@ export const LavadosView: React.FC<LavadosViewProps> = ({
                   nameKey="taller"
                   cx="50%"
                   cy="50%"
-                  innerRadius={45}
-                  outerRadius={70}
+                  innerRadius={38}
+                  outerRadius={60}
                   paddingAngle={4}
+                  label={({ cx, cy, midAngle, outerRadius, percent, count }: any) => {
+                    if (!count || count === 0) return null;
+                    const RADIAN = Math.PI / 180;
+                    const radius = outerRadius + 14;
+                    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                    const pct = Math.round((percent || 0) * 100);
+                    return (
+                      <text
+                        x={x}
+                        y={y}
+                        fill="#e2e8f0"
+                        textAnchor={x > cx ? 'start' : 'end'}
+                        dominantBaseline="central"
+                        fontSize={10}
+                        fontWeight={600}
+                      >
+                        {`${count} (${pct}%)`}
+                      </text>
+                    );
+                  }}
+                  labelLine={{ stroke: '#475569', strokeWidth: 1 }}
                 >
                   {summary.byTaller.map((_entry, index) => (
                     <Cell
