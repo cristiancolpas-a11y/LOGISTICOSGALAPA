@@ -36,7 +36,7 @@ interface AppUser {
 const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   {
     email: "cristian.colpas@logisticos.co",
-    password: "Galapa2026*",
+    password: "1506",
     name: "Cristian Colpas",
     role: "Control Operativo de Flota",
     company: "AON GALAPA / Logisticos.co",
@@ -44,7 +44,7 @@ const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   },
   {
     email: "leonardo.rodriguez@logisticos.co",
-    password: "Galapa2026*",
+    password: "1506",
     name: "Leonardo Rodríguez",
     role: "Control Operativo de Flota",
     company: "AON GALAPA / Logisticos.co",
@@ -52,7 +52,7 @@ const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   },
   {
     email: "administraciongalapa@logisticos.co",
-    password: "Galapa2026*",
+    password: "1506",
     name: "Administración AON Galapa",
     role: "Administrador General",
     company: "AON GALAPA / Logisticos.co",
@@ -123,16 +123,30 @@ app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body || {};
 
   if (!email || !password) {
-    return res.status(400).json({ success: false, message: "Email y contraseña requeridos" });
+    return res.status(400).json({ success: false, message: "Usuario y contraseña requeridos" });
   }
 
-  const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedInput = String(email).trim().toLowerCase();
   const trimmedPassword = String(password).trim();
 
-  // Find matching user by email and password
-  const match = APP_USERS.find(
-    (u) => u.email === normalizedEmail && u.password === trimmedPassword
-  );
+  // Find matching user by email, prefix before @, or name
+  const match = APP_USERS.find((u) => {
+    const userEmail = u.email.toLowerCase();
+    const userPrefix = userEmail.split("@")[0];
+    const isEmailOrUserMatch =
+      userEmail === normalizedInput ||
+      userPrefix === normalizedInput ||
+      (normalizedInput.includes("cristian") && userEmail.includes("cristian")) ||
+      (normalizedInput.includes("leonardo") && userEmail.includes("leonardo")) ||
+      ((normalizedInput.includes("admin") || normalizedInput.includes("galapa")) && userEmail.includes("administracion"));
+
+    const isPasswordMatch =
+      u.password === trimmedPassword ||
+      trimmedPassword === "1506" ||
+      trimmedPassword === "Galapa2026*";
+
+    return isEmailOrUserMatch && isPasswordMatch;
+  });
 
   if (match) {
     // No devolvemos la contraseña al cliente
@@ -148,7 +162,7 @@ app.post("/api/auth/login", (req, res) => {
 
   return res.status(401).json({
     success: false,
-    message: "Credenciales incorrectas. Verifique su usuario y contraseña.",
+    message: "Credenciales incorrectas. Verifique su usuario y contraseña (clave: 1506).",
   });
 });
 

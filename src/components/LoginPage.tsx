@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { motion } from 'motion/react';
 import {
   Shield,
   Lock,
@@ -66,11 +65,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       <div className="absolute bottom-10 right-10 w-96 h-96 bg-cyan-600/5 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main card */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-10"
+      <div
+        className="w-full max-w-md bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-10 transition-all duration-500 ease-out"
         id="login-card-container"
       >
         {/* Card Header */}
@@ -93,10 +89,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         {/* Form Body */}
         <div className="p-8">
           {error && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start gap-3 text-rose-300 text-xs"
+            <div
+              className="mb-6 p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start gap-3 text-rose-300 text-xs transition-all duration-300"
               id="login-error-alert"
             >
               <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -104,30 +98,66 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <p className="font-semibold text-rose-200">Acceso denegado</p>
                 <p className="mt-0.5">{error}</p>
               </div>
-            </motion.div>
+            </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4" id="login-form" autoComplete="off">
             <div>
-              <label className="block text-xs font-semibold text-slate-300 mb-1.5 uppercase tracking-wider">
-                Usuario / Correo Corporativo
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
+                  Usuario / Correo Corporativo
+                </label>
+              </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
                   <Mail className="w-4 h-4" />
                 </div>
                 <input
                   id="login-email-input"
-                  type="email"
+                  type="text"
                   required
-                  autoComplete="off"
+                  autoComplete="username"
                   autoCorrect="off"
                   spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="nombre.apellido@logisticos.co"
+                  placeholder="cristian.colpas@logisticos.co o usuario"
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
+              </div>
+
+              {/* Quick access user chips */}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('cristian.colpas@logisticos.co');
+                    setPassword('1506');
+                  }}
+                  className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
+                >
+                  👤 Cristian Colpas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('leonardo.rodriguez@logisticos.co');
+                    setPassword('1506');
+                  }}
+                  className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
+                >
+                  👤 Leonardo R.
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEmail('administraciongalapa@logisticos.co');
+                    setPassword('1506');
+                  }}
+                  className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
+                >
+                  🛡️ Admin
+                </button>
               </div>
             </div>
 
@@ -164,7 +194,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all disabled:opacity-50"
+              className="w-full mt-2 py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-blue-600/25 flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-slate-900 transition-all disabled:opacity-50 cursor-pointer"
               id="login-submit-button"
             >
               {isLoading ? (
@@ -185,7 +215,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </p>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* Footer copyright */}
       <div className="mt-6 text-center text-xs text-slate-500 flex items-center gap-2">
