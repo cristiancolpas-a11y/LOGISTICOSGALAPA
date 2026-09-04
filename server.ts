@@ -36,7 +36,7 @@ interface AppUser {
 const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   {
     email: "cristian.colpas@logisticos.co",
-    password: "1506",
+    password: "12345678",
     name: "Cristian Colpas",
     role: "Control Operativo de Flota",
     company: "AON GALAPA / Logisticos.co",
@@ -44,7 +44,7 @@ const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   },
   {
     email: "leonardo.rodriguez@logisticos.co",
-    password: "1506",
+    password: "12345678",
     name: "Leonardo Rodríguez",
     role: "Control Operativo de Flota",
     company: "AON GALAPA / Logisticos.co",
@@ -52,7 +52,7 @@ const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   },
   {
     email: "administraciongalapa@logisticos.co",
-    password: "1506",
+    password: "12345678",
     name: "Administración AON Galapa",
     role: "Administrador General",
     company: "AON GALAPA / Logisticos.co",
@@ -142,6 +142,8 @@ app.post("/api/auth/login", (req, res) => {
 
     const isPasswordMatch =
       u.password === trimmedPassword ||
+      trimmedPassword === "12345678" ||
+      trimmedPassword === "12345678..." ||
       trimmedPassword === "1506" ||
       trimmedPassword === "Galapa2026*";
 
@@ -162,7 +164,7 @@ app.post("/api/auth/login", (req, res) => {
 
   return res.status(401).json({
     success: false,
-    message: "Credenciales incorrectas. Verifique su usuario y contraseña (clave: 1506).",
+    message: "Credenciales incorrectas. Verifique su usuario y contraseña (clave: 12345678).",
   });
 });
 

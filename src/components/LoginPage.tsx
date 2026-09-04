@@ -132,7 +132,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   type="button"
                   onClick={() => {
                     setEmail('cristian.colpas@logisticos.co');
-                    setPassword('1506');
+                    setPassword('12345678');
                   }}
                   className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
                 >
@@ -142,7 +142,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   type="button"
                   onClick={() => {
                     setEmail('leonardo.rodriguez@logisticos.co');
-                    setPassword('1506');
+                    setPassword('12345678');
                   }}
                   className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
                 >
@@ -152,7 +152,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                   type="button"
                   onClick={() => {
                     setEmail('administraciongalapa@logisticos.co');
-                    setPassword('1506');
+                    setPassword('12345678');
                   }}
                   className="text-[11px] px-2 py-1 rounded-lg bg-slate-800/80 hover:bg-blue-600/20 hover:text-blue-300 text-slate-400 border border-slate-700/60 transition-colors"
                 >
