@@ -103,6 +103,11 @@ const LavadosView = React.lazy(() =>
     default: m.LavadosView
   }))
 );
+const NovedadesSafetyView = React.lazy(() =>
+  import('./components/views/NovedadesSafetyView').then((m) => ({
+    default: m.NovedadesSafetyView
+  }))
+);
 
 const SESSION_STORAGE_KEY = 'aon_galapa_session_v1';
 const GOOGLE_SHEET_ID = '18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk';
@@ -127,7 +132,7 @@ export default function App() {
   });
 
   // 2. Navigation State
-  const [activeModule, setActiveModule] = useState('check-list');
+  const [activeModule, setActiveModule] = useState('novedades-safety');
   const [activeTab, setActiveTab] = useState<
     'dashboard' | 'salida' | 'retorno' | 'alertas' | 'database'
   >('dashboard');
@@ -191,10 +196,13 @@ export default function App() {
         `/api/sheet-data?sheet=${encodeURIComponent(sheetName)}${isManualRefresh ? '&refresh=true' : ''}`
       );
       if (res.ok) {
-        const json = await res.json();
-        if (json.success && json.csv) {
-          csvContent = json.csv;
-          serverFetched = true;
+        const text = await res.text();
+        if (text.trim().startsWith('{')) {
+          const json = JSON.parse(text);
+          if (json.success && json.csv) {
+            csvContent = json.csv;
+            serverFetched = true;
+          }
         }
       }
     } catch (err) {
@@ -521,6 +529,24 @@ export default function App() {
         {/* Dynamic Main Content Area */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8" id="dashboard-main-content">
           <div className="max-w-7xl mx-auto space-y-6">
+            {/* MODULE 0: NOVEDADES REPORTADAS SAFETY-FLOTA */}
+            {activeModule === 'novedades-safety' && (
+              <Suspense
+                fallback={
+                  <div className="p-12 text-center bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3">
+                    <div className="w-8 h-8 border-2 border-rose-500 border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-xs text-slate-400">Cargando módulo de Novedades Safety...</p>
+                  </div>
+                }
+              >
+                <NovedadesSafetyView
+                  userSession={userSession}
+                  fleetPlates={vehiculosRecords.map((v) => v.placa)}
+                  lastUpdated={lastUpdated}
+                />
+              </Suspense>
+            )}
+
             {/* MODULE 1: CHECK LIST */}
             {activeModule === 'check-list' && (
               <>

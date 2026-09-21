@@ -388,3 +388,32 @@ export interface FleetMasterSummary {
   };
 }
 
+// ==========================================
+// MÓDULO: NOVEDADES REPORTADAS SAFETY-FLOTA ("NOVEDADES-SAFETY")
+// ==========================================
+export type SafetyEstado = 'PENDIENTE' | 'REALIZADO';
+
+export interface SafetyNovedadRecord {
+  id: string;
+  fila: number;
+  categoria: string;
+  placa: string;
+  novedad: string;
+  evidenciaReporte: string;
+  evidenciaCorregida: string;
+  estado: SafetyEstado;
+  reportadoPor?: string;
+  reportadoFecha?: string;
+  cerradoPor?: string;
+  cerradoFecha?: string;
+}
+
+export interface SafetySummary {
+  total: number;
+  pendientes: number;
+  realizados: number;
+  porcentajeCierre: number;
+  categoriasCount: Record<string, { total: number; pendientes: number; realizados: number }>;
+  placasCount: Record<string, { total: number; pendientes: number; realizados: number }>;
+}
+
