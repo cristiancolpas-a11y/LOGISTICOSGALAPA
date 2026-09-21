@@ -490,7 +490,11 @@ async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean;
     }
 
     if (json && typeof json === "object" && json.success === false) {
-      console.error("[SAFETY GAS ERROR]:", json.message);
+      if (isDrivePermissionError(json.message) || json.needsDriveAuth) {
+        console.warn("[SAFETY GAS NOTICE] Google Drive requiere autorización en Apps Script (activando fallback alojado en servidor):", json.message);
+      } else {
+        console.error("[SAFETY GAS ERROR]:", json.message);
+      }
       return {
         success: false,
         error: json.message || "Error devuelto por Google Apps Script",
@@ -580,11 +584,10 @@ app.post("/api/safety-novedades/upload", async (req, res) => {
 
     if (!driveUploadRes.success) {
       const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Error al subir a Google Drive";
-      console.error("[SAFETY UPLOAD DRIVE ERROR]:", errMsg);
 
       if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
         const hostedUrl = getHostedEvidenceUrl(req, uniqueName);
-        console.warn("[SAFETY UPLOAD FALLBACK] DriveApp requiere autorización. Usando enlace alojado en servidor:", hostedUrl);
+        console.warn("[SAFETY UPLOAD FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace alojado en servidor:", hostedUrl);
         return res.json({
           success: true,
           url: hostedUrl,
@@ -598,6 +601,7 @@ app.post("/api/safety-novedades/upload", async (req, res) => {
         });
       }
 
+      console.error("[SAFETY UPLOAD DRIVE ERROR]:", errMsg);
       return res.status(502).json({
         success: false,
         message: `No se pudo subir la evidencia a Google Drive: ${errMsg}. Intenta de nuevo.`,
@@ -796,12 +800,12 @@ app.post("/api/safety-novedades/close", async (req, res) => {
 
       if (!driveUploadRes.success) {
         const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Fallo en subida a Google Drive";
-        console.error("[SAFETY CLOSE DRIVE ERROR]:", errMsg);
 
         if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
           finalEvidencia = getHostedEvidenceUrl(req, uniqueName);
-          console.warn("[SAFETY CLOSE FALLBACK] Usando enlace del servidor:", finalEvidencia);
+          console.warn("[SAFETY CLOSE FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace del servidor:", finalEvidencia);
         } else {
+          console.error("[SAFETY CLOSE DRIVE ERROR]:", errMsg);
           return res.status(502).json({
             success: false,
             message: `No se pudo subir la evidencia de corrección a Google Drive: ${errMsg}. La novedad no fue cerrada. Intente de nuevo.`,
@@ -811,7 +815,7 @@ app.post("/api/safety-novedades/close", async (req, res) => {
       } else {
         const driveUrl = driveUploadRes.result?.driveUrl || driveUploadRes.result?.url;
         if (!driveUrl || (!driveUrl.includes("drive.google.com") && !driveUrl.includes("docs.google.com")) || driveUrl.includes("1AON_")) {
-          console.error("[SAFETY CLOSE DRIVE ERROR] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
+          console.warn("[SAFETY CLOSE DRIVE WARNING] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
           finalEvidencia = getHostedEvidenceUrl(req, uniqueName);
         } else {
           finalEvidencia = driveUrl;
@@ -1024,12 +1028,12 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
 
       if (!driveUploadRes.success) {
         const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Fallo en subida a Google Drive";
-        console.error("[SAFETY UPDATE EVIDENCE DRIVE ERROR]:", errMsg);
 
         if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
           finalDriveUrl = getHostedEvidenceUrl(req, uniqueName);
-          console.warn("[SAFETY UPDATE EVIDENCE FALLBACK] Usando enlace del servidor:", finalDriveUrl);
+          console.warn("[SAFETY UPDATE EVIDENCE FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace del servidor:", finalDriveUrl);
         } else {
+          console.error("[SAFETY UPDATE EVIDENCE DRIVE ERROR]:", errMsg);
           return res.status(502).json({
             success: false,
             message: `No se pudo subir la evidencia a Google Drive: ${errMsg}. La fila #${record.fila} no fue modificada. Intente de nuevo.`,
@@ -1039,7 +1043,7 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
       } else {
         const driveUrl = driveUploadRes.result?.driveUrl || driveUploadRes.result?.url;
         if (!driveUrl || (!driveUrl.includes("drive.google.com") && !driveUrl.includes("docs.google.com")) || driveUrl.includes("1AON_")) {
-          console.error("[SAFETY UPDATE EVIDENCE DRIVE ERROR] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
+          console.warn("[SAFETY UPDATE EVIDENCE DRIVE WARNING] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
           finalDriveUrl = getHostedEvidenceUrl(req, uniqueName);
         } else {
           finalDriveUrl = driveUrl;

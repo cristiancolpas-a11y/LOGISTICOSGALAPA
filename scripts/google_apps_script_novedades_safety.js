@@ -194,7 +194,7 @@ function getOrCreateEvidenciasFolder() {
       return existingFolder;
     }
   } catch (searchErr) {
-    console.error("[DRIVE] Error al buscar carpeta por nombre: " + searchErr.toString());
+    console.warn("[DRIVE] Estado de acceso a DriveApp: " + searchErr.toString());
     throw new Error("Error al acceder a Google Drive (verifique permisos de DriveApp): " + searchErr.toString());
   }
 
@@ -325,9 +325,13 @@ function doPost(e) {
           filename: uploadFilename
         });
       } catch (upErr) {
-        console.error("[SAFETY APPS SCRIPT UPLOAD ERROR]: " + upErr.toString());
         var errStr = upErr.toString();
         var isDrivePermError = errStr.indexOf("DriveApp") !== -1 || errStr.indexOf("permission") !== -1 || errStr.indexOf("drive.readonly") !== -1 || errStr.indexOf("auth") !== -1;
+        if (isDrivePermError) {
+          console.warn("[SAFETY APPS SCRIPT UPLOAD NOTICE]: DriveApp requiere autorización.");
+        } else {
+          console.error("[SAFETY APPS SCRIPT UPLOAD ERROR]: " + errStr);
+        }
         return createJsonResponse(false, "Error al guardar en Google Drive: " + errStr, {
           error: errStr,
           needsDriveAuth: isDrivePermError,
