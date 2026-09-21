@@ -10,7 +10,7 @@ import { SafetyNovedadRecord } from '../../types';
 import { EvidenceCollageUploader } from '../common/EvidenceCollageUploader';
 import { EvidencePreviewModal, hasEvidenceLink } from '../common/EvidencePreviewModal';
 import { CollageResult } from '../../utils/collageGenerator';
-import { safeFetchJson } from '../../utils/apiClient';
+import { safeFetchJson, ApiError } from '../../utils/apiClient';
 
 interface CargarEvidenciaFilaModalProps {
   record: SafetyNovedadRecord;
@@ -94,6 +94,21 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
         data.message || `Collage de evidencia para la fila #${record.fila} (${record.placa}) guardado con éxito en Google Drive y Sheets.`
       );
     } catch (err: unknown) {
+      if (err instanceof ApiError && err.status === 404) {
+        // En entorno estático sin backend activo, guardar evidencia como data URL local
+        const localDataUrl = `data:image/jpeg;base64,${collageResult.base64Data}`;
+        const updatedRecord: SafetyNovedadRecord = {
+          ...record,
+          evidenciaReporte: isReporte ? localDataUrl : record.evidenciaReporte,
+          evidenciaCorregida: !isReporte ? localDataUrl : record.evidenciaCorregida,
+          estado: !isReporte && record.estado === 'PENDIENTE' ? 'REALIZADO' : record.estado
+        };
+        onSuccess(
+          updatedRecord,
+          `Evidencia de collage guardada localmente para la fila #${record.fila} (${record.placa}) en modo resiliente.`
+        );
+        return;
+      }
       const msg = err instanceof Error ? err.message : 'Error inesperado al cargar la evidencia.';
       setErrorMsg(msg);
     } finally {
