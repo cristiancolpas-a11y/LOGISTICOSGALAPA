@@ -10,6 +10,8 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
+app.set("trust proxy", true);
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -422,8 +424,9 @@ function isDrivePermissionError(errorMsg?: string): boolean {
 function getHostedEvidenceUrl(req: express.Request, filename: string): string {
   const rawHost = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
   const host = rawHost.split(",")[0].trim();
-  const rawProto = req.get("x-forwarded-proto") || (req.protocol === "https" ? "https" : "http");
-  const proto = rawProto.split(",")[0].trim();
+  const isLocalhost = host.includes("localhost") || host.includes("127.0.0.1");
+  const rawProto = req.get("x-forwarded-proto") || req.protocol;
+  const proto = isLocalhost ? (rawProto || "http") : "https";
   return `${proto}://${host}/uploads/${filename}`;
 }
 

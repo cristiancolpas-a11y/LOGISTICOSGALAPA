@@ -118,15 +118,13 @@ function getSheetUrl(sheetName: string): string {
 
 export default function App() {
   // 1. Authentication State
+  // Configuración estricta de seguridad: Al recargar la página (F5/Refresh) se exige iniciar sesión directamente
   const [userSession, setUserSession] = useState<UserSession | null>(() => {
     try {
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
       localStorage.removeItem(SESSION_STORAGE_KEY);
-      const saved = sessionStorage.getItem(SESSION_STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
-      }
     } catch (e) {
-      console.error('Failed to load session from storage', e);
+      console.error('Failed to clear session storage', e);
     }
     return null;
   });
@@ -362,10 +360,12 @@ export default function App() {
   // Login & Logout handlers
   const handleLoginSuccess = (session: UserSession) => {
     setUserSession(session);
+    // No persistir en sessionStorage ni localStorage para que cualquier recarga (F5/Refresh) envíe al login
     try {
-      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+      sessionStorage.removeItem(SESSION_STORAGE_KEY);
+      localStorage.removeItem(SESSION_STORAGE_KEY);
     } catch (e) {
-      console.error('Failed to persist session', e);
+      console.error('Failed to clear storage on login', e);
     }
   };
 

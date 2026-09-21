@@ -27,6 +27,33 @@ export interface EvidencePreviewModalProps {
 }
 
 /**
+ * Normaliza cualquier URL de evidencia (uploads locales, enlaces con http, dominios de preview, etc.)
+ * para que siempre sea compatible con el protocolo y origen actual de la aplicación.
+ */
+export function normalizeEvidenceUrl(rawUrl: string): string {
+  if (!rawUrl) return '';
+  const trimmed = rawUrl.trim();
+
+  // 1. Archivos locales almacenados en el servidor (/uploads/...)
+  if (trimmed.includes('/uploads/')) {
+    const idx = trimmed.indexOf('/uploads/');
+    return trimmed.substring(idx);
+  }
+
+  // 2. Base64 data URLs
+  if (trimmed.startsWith('data:image/')) {
+    return trimmed;
+  }
+
+  // 3. Si el navegador corre bajo HTTPS y la URL viene con HTTP inseguro, elevar a HTTPS para evitar bloqueo de contenido mixto
+  if (trimmed.startsWith('http://') && typeof window !== 'undefined' && window.location.protocol === 'https:') {
+    return trimmed.replace(/^http:\/\//, 'https://');
+  }
+
+  return trimmed;
+}
+
+/**
  * Extrae el identificador único de archivo de Google Drive a partir de distintas estructuras de URL
  */
 export function extractDriveFileId(url: string): string | null {
@@ -84,23 +111,27 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [imgLoading, setImgLoading] = useState<boolean>(true);
   const [imgError, setImgError] = useState<boolean>(false);
-  // viewMode: 'image' (renderizado directo de foto/collage) o 'iframe' (visor nativo de Google Drive)
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const [viewMode, setViewMode] = useState<'image' | 'iframe'>('image');
+  const [activeImageSrc, setActiveImageSrc] = useState<string>('');
+  const [driveCdnIndex, setDriveCdnIndex] = useState<number>(0);
 
-  const fileId = extractDriveFileId(url);
+  const normalizedUrl = normalizeEvidenceUrl(url);
+  const fileId = extractDriveFileId(url) || extractDriveFileId(normalizedUrl);
   const isDriveUrl = !!fileId || url.includes('drive.google.com') || url.includes('docs.google.com');
 
-  // Enlaces calculados para Google Drive
+  // CDNs y endpoints de Google Drive
   const driveEmbedUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : null;
   const driveThumbnailUrl = fileId ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600` : null;
   const driveLh3Url = fileId ? `https://lh3.googleusercontent.com/d/${fileId}` : null;
+  const driveDirectUrl = fileId ? `https://drive.google.com/uc?export=view&id=${fileId}` : null;
 
-  // URL principal a renderizar en la etiqueta <img>
-  const computedImageUrl = isDriveUrl
-    ? (driveLh3Url || driveThumbnailUrl || url)
-    : url;
+  // URL resuelta para abrir en pestaña nueva o copiar
+  const fullExternalUrl = normalizedUrl.startsWith('/uploads/') && typeof window !== 'undefined'
+    ? `${window.location.origin}${normalizedUrl}`
+    : normalizedUrl;
 
-  // Reset de estados cuando cambia la URL o se abre la ventana
+  // Inicializar origen y estados cuando se abre la modal o cambia la URL
   useEffect(() => {
     if (isOpen) {
       setZoom(1);
@@ -108,9 +139,19 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
       setCopied(false);
       setImgLoading(true);
       setImgError(false);
-      setViewMode('image');
+      setErrorMessage('');
+      setDriveCdnIndex(0);
+
+      if (isDriveUrl) {
+        // En Drive, intentar primero con el endpoint de thumbnail de alta resolución
+        setActiveImageSrc(driveThumbnailUrl || driveLh3Url || driveDirectUrl || normalizedUrl);
+        setViewMode('image');
+      } else {
+        setActiveImageSrc(normalizedUrl);
+        setViewMode('image');
+      }
     }
-  }, [isOpen, url]);
+  }, [isOpen, url, normalizedUrl, isDriveUrl, driveThumbnailUrl, driveLh3Url, driveDirectUrl]);
 
   if (!isOpen) return null;
 
@@ -124,11 +165,55 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
 
   const handleCopyLink = async () => {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(fullExternalUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Silencioso
+    }
+  };
+
+  const handleImageError = () => {
+    setImgLoading(false);
+
+    if (isDriveUrl) {
+      // Alternar entre CDNs de Drive: thumbnail -> lh3 -> iframe automático
+      if (driveCdnIndex === 0 && driveLh3Url && activeImageSrc !== driveLh3Url) {
+        setDriveCdnIndex(1);
+        setImgLoading(true);
+        setActiveImageSrc(driveLh3Url);
+        return;
+      }
+      if (driveCdnIndex <= 1 && driveDirectUrl && activeImageSrc !== driveDirectUrl) {
+        setDriveCdnIndex(2);
+        setImgLoading(true);
+        setActiveImageSrc(driveDirectUrl);
+        return;
+      }
+
+      // Si los CDNs directos de Drive fallan (por permisos o cookies de terceros),
+      // conmutamos automáticamente al visor IFRAME nativo de Google Drive para previsualizarlo sin fricción
+      if (driveEmbedUrl) {
+        setViewMode('iframe');
+        setImgError(false);
+        return;
+      }
+
+      setImgError(true);
+      setErrorMessage('Este archivo en Google Drive tiene restricciones de acceso o requiere permisos de tu cuenta.');
+    } else {
+      // Si falló una URL relativa /uploads/, intentar con origen absoluto
+      if (activeImageSrc.startsWith('/uploads/') && typeof window !== 'undefined') {
+        const absoluteUrl = `${window.location.origin}${activeImageSrc}`;
+        if (activeImageSrc !== absoluteUrl) {
+          setImgLoading(true);
+          setActiveImageSrc(absoluteUrl);
+          return;
+        }
+      }
+
+      setImgError(true);
+      setErrorMessage('No se pudo cargar la imagen desde el servidor. Puedes abrir el enlace original en una pestaña nueva.');
     }
   };
 
