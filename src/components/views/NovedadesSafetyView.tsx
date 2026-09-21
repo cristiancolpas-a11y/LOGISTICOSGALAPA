@@ -31,7 +31,8 @@ import {
   ClipboardPaste,
   FileUp,
   FileCheck,
-  Check
+  Check,
+  Images
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell, PieChart, Pie } from 'recharts';
 import { SafetyNovedadRecord, SafetySummary, UserSession } from '../../types';
@@ -45,6 +46,7 @@ import {
 import { GoogleSheetsSyncModal } from './GoogleSheetsSyncModal';
 import { CargarEvidenciaFilaModal } from './CargarEvidenciaFilaModal';
 import { EvidenceCollageUploader } from '../common/EvidenceCollageUploader';
+import { EvidencePreviewModal, hasEvidenceLink } from '../common/EvidencePreviewModal';
 import { CollageResult } from '../../utils/collageGenerator';
 import { safeFetchJson } from '../../utils/apiClient';
 
@@ -90,7 +92,12 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
   const [showScriptModal, setShowScriptModal] = useState(false);
   const [isWebhookConfigured, setIsWebhookConfigured] = useState(false);
   const [selectedRecordToClose, setSelectedRecordToClose] = useState<SafetyNovedadRecord | null>(null);
-  const [previewEvidence, setPreviewEvidence] = useState<{ title: string; url: string } | null>(null);
+  const [previewEvidence, setPreviewEvidence] = useState<{
+    title: string;
+    url: string;
+    type?: 'reporte' | 'corregida';
+    record?: SafetyNovedadRecord | null;
+  } | null>(null);
   const [uploadEvidenceTarget, setUploadEvidenceTarget] = useState<{
     record: SafetyNovedadRecord;
     targetColumn: 'reporte' | 'corregida';
@@ -679,7 +686,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
                             key={record.id}
                             record={record}
                             onCloseClick={handleOpenCloseModal}
-                            onViewEvidence={(title, url) => setPreviewEvidence({ title, url })}
+                            onViewEvidence={(title, url, type, rec) => setPreviewEvidence({ title, url, type, record: rec })}
                             onUploadEvidence={handleOpenUploadEvidence}
                           />
                         ))}
@@ -743,7 +750,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
                             key={record.id}
                             record={record}
                             onCloseClick={handleOpenCloseModal}
-                            onViewEvidence={(title, url) => setPreviewEvidence({ title, url })}
+                            onViewEvidence={(title, url, type, rec) => setPreviewEvidence({ title, url, type, record: rec })}
                             onUploadEvidence={handleOpenUploadEvidence}
                           />
                         ))}
@@ -760,7 +767,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
             <SafetyTable
               records={filteredRecords}
               onCloseClick={handleOpenCloseModal}
-              onViewEvidence={(title, url) => setPreviewEvidence({ title, url })}
+              onViewEvidence={(title, url, type, rec) => setPreviewEvidence({ title, url, type, record: rec })}
               onUploadEvidence={handleOpenUploadEvidence}
             />
           )}
@@ -783,7 +790,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
           <SafetyTable
             records={filteredRecords}
             onCloseClick={handleOpenCloseModal}
-            onViewEvidence={(title, url) => setPreviewEvidence({ title, url })}
+            onViewEvidence={(title, url, type, rec) => setPreviewEvidence({ title, url, type, record: rec })}
             onUploadEvidence={handleOpenUploadEvidence}
           />
         </div>
@@ -856,7 +863,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
           <SafetyTable
             records={filteredRecords}
             onCloseClick={handleOpenCloseModal}
-            onViewEvidence={(title, url) => setPreviewEvidence({ title, url })}
+            onViewEvidence={(title, url, type, rec) => setPreviewEvidence({ title, url, type, record: rec })}
             onUploadEvidence={handleOpenUploadEvidence}
           />
         </div>
@@ -979,20 +986,29 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-800/80">
                     <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/40 border border-slate-700/50">
                       <span className="text-slate-400 text-[11px]">Evidencia Reporte:</span>
-                      {record.evidenciaReporte ? (
+                      {hasEvidenceLink(record.evidenciaReporte) ? (
                         <button
-                          onClick={() => setPreviewEvidence({ title: `Evidencia Reporte - ${record.placa}`, url: record.evidenciaReporte })}
-                          className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 text-[11px]"
+                          type="button"
+                          onClick={() => setPreviewEvidence({
+                            title: `Evidencia Reporte #${record.fila} (${record.placa})`,
+                            url: record.evidenciaReporte,
+                            type: 'reporte',
+                            record
+                          })}
+                          className="text-blue-300 hover:text-blue-200 font-semibold flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg bg-blue-500/15 border border-blue-500/30 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                          title="Ver evidencia en galería dentro de la app"
                         >
-                          <Eye className="w-3 h-3" />
-                          <span>Ver archivo</span>
+                          <Images className="w-3.5 h-3.5 text-blue-400" />
+                          <span>Galería</span>
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => handleOpenUploadEvidence(record, 'reporte')}
-                          className="text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg bg-blue-500/10 border border-blue-500/30 transition-colors"
+                          className="text-slate-400 hover:text-blue-300 font-medium flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+                          title="Subir evidencia inicial del reporte"
                         >
-                          <Upload className="w-3 h-3" />
+                          <Upload className="w-3 h-3 text-slate-400" />
                           <span>+ Subir reporte</span>
                         </button>
                       )}
@@ -1000,20 +1016,29 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
 
                     <div className="flex items-center justify-between p-2 rounded-xl bg-slate-800/40 border border-slate-700/50">
                       <span className="text-slate-400 text-[11px]">Evidencia Corrección:</span>
-                      {record.evidenciaCorregida ? (
+                      {hasEvidenceLink(record.evidenciaCorregida) ? (
                         <button
-                          onClick={() => setPreviewEvidence({ title: `Evidencia Corrección - ${record.placa}`, url: record.evidenciaCorregida })}
-                          className="text-emerald-400 hover:text-emerald-300 font-medium flex items-center gap-1 text-[11px]"
+                          type="button"
+                          onClick={() => setPreviewEvidence({
+                            title: `Evidencia Corrección #${record.fila} (${record.placa})`,
+                            url: record.evidenciaCorregida,
+                            type: 'corregida',
+                            record
+                          })}
+                          className="text-emerald-300 hover:text-emerald-200 font-semibold flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                          title="Ver evidencia de corrección en galería dentro de la app"
                         >
-                          <Eye className="w-3 h-3" />
-                          <span>Ver corrección</span>
+                          <Images className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Galería</span>
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => handleOpenUploadEvidence(record, 'corregida')}
-                          className="text-emerald-400 hover:text-emerald-300 font-semibold flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 transition-colors"
+                          className="text-slate-400 hover:text-emerald-300 font-medium flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-colors"
+                          title="Subir evidencia de corrección"
                         >
-                          <Upload className="w-3 h-3" />
+                          <Upload className="w-3 h-3 text-slate-400" />
                           <span>+ Subir corrección</span>
                         </button>
                       )}
@@ -1106,69 +1131,16 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
         />
       )}
 
-      {/* MODAL 3: VISOR DE EVIDENCIA (FOTO O ENLACE DRIVE) */}
+      {/* MODAL 3: VISOR DE EVIDENCIA DENTRO DE LA APP */}
       {previewEvidence && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-2xl w-full p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Camera className="w-4 h-4 text-blue-400" />
-                <span>{previewEvidence.title}</span>
-              </h3>
-              <button
-                onClick={() => setPreviewEvidence(null)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="bg-slate-950 rounded-xl p-3 flex items-center justify-center min-h-[300px] max-h-[500px] overflow-hidden">
-              {previewEvidence.url.startsWith('http') || previewEvidence.url.startsWith('/uploads') ? (
-                previewEvidence.url.match(/\.(jpg|jpeg|png|webp|gif)$/i) || previewEvidence.url.startsWith('/uploads') ? (
-                  <img
-                    src={previewEvidence.url}
-                    alt="Evidencia"
-                    className="max-h-[460px] max-w-full object-contain rounded-lg shadow-md"
-                    referrerPolicy="no-referrer"
-                    onError={(e) => {
-                      // Fallback if image fails to render direct
-                      (e.target as HTMLElement).style.display = 'none';
-                    }}
-                  />
-                ) : (
-                  <div className="text-center space-y-3 p-6">
-                    <ExternalLink className="w-12 h-12 text-blue-400 mx-auto opacity-70" />
-                    <p className="text-xs text-slate-300">Enlace externo o Google Drive adjunto:</p>
-                    <a
-                      href={previewEvidence.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold"
-                    >
-                      <span>Abrir en Google Drive</span>
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
-                )
-              ) : (
-                <div className="text-xs text-slate-400 p-4 font-mono break-all">
-                  {previewEvidence.url}
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-slate-400 pt-1">
-              <span className="truncate max-w-sm font-mono text-[11px]">{previewEvidence.url}</span>
-              <button
-                onClick={() => setPreviewEvidence(null)}
-                className="px-4 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium"
-              >
-                Cerrar
-              </button>
-            </div>
-          </div>
-        </div>
+        <EvidencePreviewModal
+          isOpen={!!previewEvidence}
+          onClose={() => setPreviewEvidence(null)}
+          title={previewEvidence.title}
+          url={previewEvidence.url}
+          type={previewEvidence.type}
+          record={previewEvidence.record}
+        />
       )}
     </div>
   );
@@ -1180,7 +1152,7 @@ export const NovedadesSafetyView: React.FC<NovedadesSafetyViewProps> = ({
 interface SafetyCardProps {
   record: SafetyNovedadRecord;
   onCloseClick: (record: SafetyNovedadRecord) => void;
-  onViewEvidence: (title: string, url: string) => void;
+  onViewEvidence: (title: string, url: string, type?: 'reporte' | 'corregida', record?: SafetyNovedadRecord) => void;
   onUploadEvidence: (record: SafetyNovedadRecord, targetColumn: 'reporte' | 'corregida') => void;
 }
 
@@ -1227,19 +1199,21 @@ const SafetyCard: React.FC<SafetyCardProps> = ({ record, onCloseClick, onViewEvi
           {/* Controles de Evidencia Independientes (Reporte y Corrección) */}
           <div className="flex items-center gap-1.5">
             {/* Evidencia Reporte (Índice 3) */}
-            {record.evidenciaReporte ? (
+            {hasEvidenceLink(record.evidenciaReporte) ? (
               <button
-                onClick={() => onViewEvidence(`Evidencia Reporte #${record.fila} (${record.placa})`, record.evidenciaReporte)}
-                className="text-blue-400 hover:text-blue-300 text-[11px] flex items-center gap-1 font-medium bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20 transition-colors"
-                title="Ver evidencia del reporte"
+                type="button"
+                onClick={() => onViewEvidence(`Evidencia Reporte #${record.fila} (${record.placa})`, record.evidenciaReporte, 'reporte', record)}
+                className="text-blue-300 hover:text-blue-200 text-[11px] flex items-center gap-1.5 font-semibold bg-blue-500/15 px-2.5 py-1 rounded-lg border border-blue-500/30 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                title="Ver evidencia del reporte en galería dentro de la app"
               >
-                <Eye className="w-3 h-3" />
-                <span>Reporte</span>
+                <Images className="w-3 h-3 text-blue-400" />
+                <span>Galería</span>
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => onUploadEvidence(record, 'reporte')}
-                className="px-2 py-0.5 rounded bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[10px] font-semibold flex items-center gap-1 border border-blue-500/30 transition-colors"
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 text-[10px] font-medium flex items-center gap-1 border border-slate-700 transition-colors hover:text-blue-400"
                 title="Subir evidencia inicial del reporte (índice 3)"
               >
                 <Upload className="w-2.5 h-2.5" />
@@ -1248,19 +1222,21 @@ const SafetyCard: React.FC<SafetyCardProps> = ({ record, onCloseClick, onViewEvi
             )}
 
             {/* Evidencia Corrección (Índice 4) */}
-            {record.evidenciaCorregida ? (
+            {hasEvidenceLink(record.evidenciaCorregida) ? (
               <button
-                onClick={() => onViewEvidence(`Evidencia Corrección #${record.fila} (${record.placa})`, record.evidenciaCorregida)}
-                className="text-emerald-400 hover:text-emerald-300 text-[11px] flex items-center gap-1 font-medium bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 transition-colors"
-                title="Ver evidencia de corrección"
+                type="button"
+                onClick={() => onViewEvidence(`Evidencia Corrección #${record.fila} (${record.placa})`, record.evidenciaCorregida, 'corregida', record)}
+                className="text-emerald-300 hover:text-emerald-200 text-[11px] flex items-center gap-1.5 font-semibold bg-emerald-500/15 px-2.5 py-1 rounded-lg border border-emerald-500/30 transition-all hover:scale-105 active:scale-95 shadow-sm"
+                title="Ver evidencia de corrección en galería dentro de la app"
               >
-                <Eye className="w-3 h-3" />
-                <span>Corrección</span>
+                <Images className="w-3 h-3 text-emerald-400" />
+                <span>Galería</span>
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => onUploadEvidence(record, 'corregida')}
-                className="px-2 py-0.5 rounded bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[10px] font-semibold flex items-center gap-1 border border-emerald-500/30 transition-colors"
+                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-400 text-[10px] font-medium flex items-center gap-1 border border-slate-700 transition-colors hover:text-emerald-400"
                 title="Subir evidencia de corrección (índice 4)"
               >
                 <Upload className="w-2.5 h-2.5" />
@@ -1294,7 +1270,7 @@ const SafetyCard: React.FC<SafetyCardProps> = ({ record, onCloseClick, onViewEvi
 interface SafetyTableProps {
   records: SafetyNovedadRecord[];
   onCloseClick: (record: SafetyNovedadRecord) => void;
-  onViewEvidence: (title: string, url: string) => void;
+  onViewEvidence: (title: string, url: string, type?: 'reporte' | 'corregida', record?: SafetyNovedadRecord) => void;
   onUploadEvidence: (record: SafetyNovedadRecord, targetColumn: 'reporte' | 'corregida') => void;
 }
 
@@ -1349,22 +1325,24 @@ const SafetyTable: React.FC<SafetyTableProps> = ({ records, onCloseClick, onView
                     
                     {/* COLUMNA D: EVIDENCIA DEL REPORTE (ÍNDICE 3) */}
                     <td className="py-3 px-3.5 text-center">
-                      {record.evidenciaReporte ? (
+                      {hasEvidenceLink(record.evidenciaReporte) ? (
                         <button
-                          onClick={() => onViewEvidence(`Evidencia Reporte #${record.fila} (${record.placa})`, record.evidenciaReporte)}
-                          className="px-2.5 py-1 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 text-[11px] inline-flex items-center gap-1 border border-blue-500/20 font-medium transition-colors"
-                          title="Ver evidencia inicial del reporte"
+                          type="button"
+                          onClick={() => onViewEvidence(`Evidencia Reporte #${record.fila} (${record.placa})`, record.evidenciaReporte, 'reporte', record)}
+                          className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/40 text-[11px] font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105 active:scale-95"
+                          title="Ver evidencia del reporte (Galería dentro de la app)"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Ver</span>
+                          <Images className="w-3.5 h-3.5 text-blue-400" />
+                          <span>Galería</span>
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => onUploadEvidence(record, 'reporte')}
-                          className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-[11px] font-bold inline-flex items-center gap-1 shadow-sm transition-all hover:scale-105 active:scale-95"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-medium inline-flex items-center gap-1 transition-all hover:border-blue-500/40 hover:text-blue-300 active:scale-95"
                           title="Subir evidencia inicial del reporte (índice 3)"
                         >
-                          <Upload className="w-3 h-3 text-blue-400" />
+                          <Upload className="w-3 h-3 text-slate-400" />
                           <span>+ Subir</span>
                         </button>
                       )}
@@ -1372,22 +1350,24 @@ const SafetyTable: React.FC<SafetyTableProps> = ({ records, onCloseClick, onView
 
                     {/* COLUMNA E: EVIDENCIA CORREGIDA (ÍNDICE 4) */}
                     <td className="py-3 px-3.5 text-center">
-                      {record.evidenciaCorregida ? (
+                      {hasEvidenceLink(record.evidenciaCorregida) ? (
                         <button
-                          onClick={() => onViewEvidence(`Evidencia Corrección #${record.fila} (${record.placa})`, record.evidenciaCorregida)}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 text-[11px] inline-flex items-center gap-1 border border-emerald-500/20 font-medium transition-colors"
-                          title="Ver evidencia de corrección"
+                          type="button"
+                          onClick={() => onViewEvidence(`Evidencia Corrección #${record.fila} (${record.placa})`, record.evidenciaCorregida, 'corregida', record)}
+                          className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/40 text-[11px] font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all hover:scale-105 active:scale-95"
+                          title="Ver evidencia de corrección (Galería dentro de la app)"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          <span>Ver</span>
+                          <Images className="w-3.5 h-3.5 text-emerald-400" />
+                          <span>Galería</span>
                         </button>
                       ) : (
                         <button
+                          type="button"
                           onClick={() => onUploadEvidence(record, 'corregida')}
-                          className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold inline-flex items-center gap-1 shadow-sm transition-all hover:scale-105 active:scale-95"
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[11px] font-medium inline-flex items-center gap-1 transition-all hover:border-emerald-500/40 hover:text-emerald-300 active:scale-95"
                           title="Subir evidencia de corrección (índice 4)"
                         >
-                          <Upload className="w-3 h-3 text-emerald-400" />
+                          <Upload className="w-3 h-3 text-slate-400" />
                           <span>+ Subir</span>
                         </button>
                       )}
@@ -1891,6 +1871,13 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
 
   // Paso 6: Confirmación al usuario
   const [closedInfo, setClosedInfo] = useState<ClosedConfirmationInfo | null>(null);
+  const [previewModalData, setPreviewModalData] = useState<{
+    isOpen: boolean;
+    title: string;
+    url: string;
+    type?: 'reporte' | 'corregida';
+    record?: SafetyNovedadRecord;
+  } | null>(null);
 
   // Placas con pendientes agrupadas con conteo para sugerencias rápidas
   const platesWithPending = useMemo(() => {
@@ -2147,15 +2134,21 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
                       {closedInfo.evidenciaCorregida}
                     </span>
                   </div>
-                  <a
-                    href={closedInfo.evidenciaCorregida}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-[11px] font-semibold inline-flex items-center gap-1 border border-emerald-500/30 shrink-0 transition-colors"
+                  <button
+                    type="button"
+                    onClick={() => setPreviewModalData({
+                      isOpen: true,
+                      title: `Evidencia Corrección #${closedInfo.fila} (${closedInfo.placa})`,
+                      url: closedInfo.evidenciaCorregida,
+                      type: 'corregida',
+                      record: selectedRecord || undefined
+                    })}
+                    className="px-2.5 py-1 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-[11px] font-semibold inline-flex items-center gap-1.5 border border-emerald-500/30 shrink-0 transition-all hover:scale-105 active:scale-95"
+                    title="Ver evidencia en galería dentro de la app"
                   >
-                    <span>Abrir</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
+                    <Images className="w-3.5 h-3.5" />
+                    <span>Galería</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -2306,6 +2299,25 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
                             <p className="text-xs text-slate-300 line-clamp-2 leading-relaxed font-normal">
                               {rec.novedad}
                             </p>
+                            {hasEvidenceLink(rec.evidenciaReporte) && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setPreviewModalData({
+                                    isOpen: true,
+                                    title: `Evidencia Reporte #${rec.fila} (${rec.placa})`,
+                                    url: rec.evidenciaReporte,
+                                    type: 'reporte',
+                                    record: rec
+                                  });
+                                }}
+                                className="px-2 py-0.5 rounded bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 text-[10px] font-semibold inline-flex items-center gap-1 border border-blue-500/30 transition-colors"
+                              >
+                                <Images className="w-3 h-3 text-blue-400" />
+                                <span>Ver Galería Reporte</span>
+                              </button>
+                            )}
                           </div>
 
                           <button
@@ -2356,6 +2368,25 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
                   <p className="text-xs text-slate-200 leading-relaxed font-normal">
                     {selectedRecord.novedad}
                   </p>
+                  {hasEvidenceLink(selectedRecord.evidenciaReporte) && (
+                    <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+                      <span className="text-[11px] text-slate-400 font-medium">Evidencia inicial del reporte:</span>
+                      <button
+                        type="button"
+                        onClick={() => setPreviewModalData({
+                          isOpen: true,
+                          title: `Evidencia Reporte #${selectedRecord.fila} (${selectedRecord.placa})`,
+                          url: selectedRecord.evidenciaReporte,
+                          type: 'reporte',
+                          record: selectedRecord
+                        })}
+                        className="px-2.5 py-1 rounded-lg bg-blue-500/15 hover:bg-blue-500/25 text-blue-300 border border-blue-500/40 text-[11px] font-semibold inline-flex items-center gap-1.5 shadow-sm transition-all"
+                      >
+                        <Images className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Ver Galería Reporte</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -2438,6 +2469,18 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
               </button>
             </div>
           </form>
+        )}
+
+        {/* Visor de evidencia dentro de la app si se solicita */}
+        {previewModalData?.isOpen && (
+          <EvidencePreviewModal
+            isOpen={previewModalData.isOpen}
+            onClose={() => setPreviewModalData(null)}
+            title={previewModalData.title}
+            url={previewModalData.url}
+            type={previewModalData.type}
+            record={previewModalData.record}
+          />
         )}
       </div>
     </div>

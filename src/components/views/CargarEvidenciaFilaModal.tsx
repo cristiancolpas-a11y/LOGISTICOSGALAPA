@@ -3,10 +3,12 @@ import {
   Upload,
   X,
   AlertTriangle,
-  ShieldCheck
+  ShieldCheck,
+  Images
 } from 'lucide-react';
 import { SafetyNovedadRecord } from '../../types';
 import { EvidenceCollageUploader } from '../common/EvidenceCollageUploader';
+import { EvidencePreviewModal, hasEvidenceLink } from '../common/EvidencePreviewModal';
 import { CollageResult } from '../../utils/collageGenerator';
 import { safeFetchJson } from '../../utils/apiClient';
 
@@ -28,10 +30,12 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
   const [collageResult, setCollageResult] = useState<CollageResult | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
 
   const isReporte = targetColumn === 'reporte';
   const columnTitle = isReporte ? 'EVIDENCIA DEL REPORTE (Columna D)' : 'EVIDENCIA CORREGIDA (Columna E)';
-  const alreadyHasEvidence = isReporte ? !!record.evidenciaReporte : !!record.evidenciaCorregida;
+  const existingEvidenceUrl = isReporte ? record.evidenciaReporte : record.evidenciaCorregida;
+  const alreadyHasEvidence = hasEvidenceLink(existingEvidenceUrl);
 
   // Submit Handler: Sube el collage combinado a Google Drive y actualiza la celda en Sheets
   const handleSubmit = async (e: React.FormEvent) => {
@@ -162,7 +166,7 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
 
         {/* Block if already filled */}
         {alreadyHasEvidence ? (
-          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-2 mb-4">
+          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs space-y-3 mb-4">
             <div className="flex items-center gap-2 font-bold">
               <AlertTriangle className="w-4 h-4" />
               <span>Evidencia ya registrada para esta columna</span>
@@ -170,11 +174,19 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
             <p className="text-[11px] text-amber-200/90 leading-relaxed">
               Esta fila ya cuenta con un archivo registrado en {columnTitle}. Por reglas de auditoría y trazabilidad de Safety, no está permitido sobrescribir ni reemplazar una evidencia existente.
             </p>
-            <div className="pt-2">
+            <div className="pt-2 flex flex-col sm:flex-row items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPreview(true)}
+                className="w-full sm:flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold inline-flex items-center justify-center gap-1.5 shadow-md transition-all active:scale-95"
+              >
+                <Images className="w-3.5 h-3.5" />
+                <span>Ver en Galería (Previsualizar dentro de la app)</span>
+              </button>
               <button
                 type="button"
                 onClick={onClose}
-                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold"
+                className="w-full sm:w-auto px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold transition-colors"
               >
                 Cerrar ventana
               </button>
@@ -240,6 +252,18 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
           </form>
         )}
       </div>
+
+      {/* Visor de evidencia dentro de la app si se solicita */}
+      {showPreview && existingEvidenceUrl && (
+        <EvidencePreviewModal
+          isOpen={showPreview}
+          onClose={() => setShowPreview(false)}
+          title={`Evidencia ${isReporte ? 'Reporte' : 'Corrección'} #${record.fila} (${record.placa})`}
+          url={existingEvidenceUrl}
+          type={targetColumn}
+          record={record}
+        />
+      )}
     </div>
   );
 };
