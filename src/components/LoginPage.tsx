@@ -9,10 +9,8 @@ import {
   CheckCircle2,
   Eye,
   EyeOff,
-  KeyRound,
   ChevronDown,
-  ChevronUp,
-  UserCheck
+  ChevronUp
 } from 'lucide-react';
 import { UserSession } from '../types';
 import { safeFetchJson } from '../utils/apiClient';
@@ -37,7 +35,7 @@ const AUTHORIZED_USERS_LIST: FallbackUser[] = [
     role: 'Control Operativo de Flota',
     company: 'AON GALAPA / Logisticos.co',
     permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports'],
-    passwords: ['12345678', '12345678...', 'Batman1506.', '1506', 'Galapa2026*']
+    passwords: ['12345678', 'Batman1506.', '1506', 'Galapa2026*']
   },
   {
     email: 'leonardo.rodriguez@logisticos.co',
@@ -45,7 +43,7 @@ const AUTHORIZED_USERS_LIST: FallbackUser[] = [
     role: 'Control Operativo de Flota',
     company: 'AON GALAPA / Logisticos.co',
     permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports'],
-    passwords: ['12345678', '12345678...', '1718', '1506', 'Galapa2026*']
+    passwords: ['12345678', '1718', '1506', 'Galapa2026*']
   },
   {
     email: 'administraciongalapa@logisticos.co',
@@ -53,7 +51,7 @@ const AUTHORIZED_USERS_LIST: FallbackUser[] = [
     role: 'Administrador General',
     company: 'AON GALAPA / Logisticos.co',
     permissions: ['admin', 'creator', 'full_access', 'module_config', 'view_all_kpis', 'view_all_data', 'manage_dashboard', 'manage_users', 'export_reports', 'system_settings'],
-    passwords: ['12345678', '12345678...', 'superman10.', '1506', 'Galapa2026*']
+    passwords: ['12345678', 'superman10.', '1506', 'Galapa2026*']
   }
 ];
 
@@ -61,7 +59,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [showCredentialsPanel, setShowCredentialsPanel] = useState(false);
+  const [showEmailsPanel, setShowEmailsPanel] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -139,13 +137,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       if (successLocal) return;
 
       const data = response.data || {};
-      setError(data.message || 'Usuario o contraseña incorrectos. Clave activa: 12345678');
+      setError(data.message || 'Correo o contraseña incorrectos. Verifique sus credenciales de acceso.');
     } catch {
       // 2. Fallback resiliente sin conexión / servidor reiniciando
       const successLocal = authenticateLocally(cleanEmail, cleanPassword);
       if (successLocal) return;
 
-      setError('Credenciales incorrectas. Verifique su usuario y contraseña (clave autorizada: 12345678).');
+      setError('Credenciales incorrectas. Verifique su usuario y contraseña corporativos.');
     } finally {
       setIsLoading(false);
     }
@@ -156,10 +154,8 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     executeLogin(email, password);
   };
 
-  const handleQuickLogin = (userEmail: string, userPassword: string) => {
-    setEmail(userEmail);
-    setPassword(userPassword);
-    executeLogin(userEmail, userPassword);
+  const handleSelectEmail = (selectedEmail: string) => {
+    setEmail(selectedEmail);
   };
 
   return (
@@ -205,45 +201,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </div>
           )}
 
-          {/* Banner de acceso directo de 1 clic */}
-          <div className="mb-5 p-3 rounded-xl bg-blue-950/40 border border-blue-800/50">
-            <p className="text-[11px] font-semibold text-blue-300 mb-2 flex items-center gap-1.5">
-              <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-              Ingreso directo con 1 clic (Clave: 12345678):
-            </p>
-            <div className="grid grid-cols-3 gap-1.5">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('cristian.colpas@logisticos.co', '12345678')}
-                className="text-[11px] py-2 px-1.5 rounded-lg bg-slate-800 hover:bg-blue-600/30 text-slate-200 border border-slate-700 hover:border-blue-500/50 text-center font-medium transition-all cursor-pointer"
-                title="Ingresar como Cristian Colpas"
-              >
-                👤 Cristian
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('leonardo.rodriguez@logisticos.co', '12345678')}
-                className="text-[11px] py-2 px-1.5 rounded-lg bg-slate-800 hover:bg-blue-600/30 text-slate-200 border border-slate-700 hover:border-blue-500/50 text-center font-medium transition-all cursor-pointer"
-                title="Ingresar como Leonardo Rodríguez"
-              >
-                👤 Leonardo
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('administraciongalapa@logisticos.co', '12345678')}
-                className="text-[11px] py-2 px-1.5 rounded-lg bg-slate-800 hover:bg-blue-600/30 text-slate-200 border border-slate-700 hover:border-blue-500/50 text-center font-medium transition-all cursor-pointer"
-                title="Ingresar como Administrador"
-              >
-                🛡️ Admin
-              </button>
-            </div>
-          </div>
-
           <form onSubmit={handleSubmit} className="space-y-4" id="login-form" autoComplete="off">
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
-                  Usuario / Correo Corporativo
+                  Correo Corporativo
                 </label>
               </div>
               <div className="relative">
@@ -252,14 +214,14 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </div>
                 <input
                   id="login-email-input"
-                  type="text"
+                  type="email"
                   required
                   autoComplete="username"
                   autoCorrect="off"
                   spellCheck={false}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="cristian.colpas@logisticos.co"
+                  placeholder="ejemplo@logisticos.co"
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-950/80 border border-slate-700/80 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 />
               </div>
@@ -270,7 +232,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider">
                   Contraseña
                 </label>
-                <span className="text-[11px] text-blue-400 font-medium">Clave: 12345678</span>
               </div>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
@@ -315,62 +276,51 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
             </button>
           </form>
 
-          {/* Acordeón informativo de revisión de claves */}
+          {/* Acordeón informativo: Solo correos autorizados */}
           <div className="mt-5 pt-4 border-t border-slate-800/80">
             <button
               type="button"
-              onClick={() => setShowCredentialsPanel(!showCredentialsPanel)}
+              onClick={() => setShowEmailsPanel(!showEmailsPanel)}
               className="w-full flex items-center justify-between text-xs text-slate-400 hover:text-slate-200 py-1 transition-colors cursor-pointer"
               id="toggle-credentials-panel-btn"
             >
               <span className="flex items-center gap-1.5 font-medium">
-                <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                Revisar usuarios y claves autorizadas
+                <Mail className="w-3.5 h-3.5 text-blue-400" />
+                Ver correos corporativos autorizados
               </span>
-              {showCredentialsPanel ? (
+              {showEmailsPanel ? (
                 <ChevronUp className="w-4 h-4 text-slate-400" />
               ) : (
                 <ChevronDown className="w-4 h-4 text-slate-400" />
               )}
             </button>
 
-            {showCredentialsPanel && (
-              <div className="mt-3 p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-xs space-y-3 transition-all">
-                <div className="pb-2 border-b border-slate-800/60">
-                  <span className="text-slate-400 text-[11px]">🔑 Clave Universal (Válida para todos):</span>
-                  <div className="mt-1 flex items-center justify-between bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-800">
-                    <span className="font-mono text-emerald-400 font-bold text-sm">12345678</span>
-                    <span className="text-[10px] text-slate-500">Recomendada</span>
-                  </div>
-                </div>
+            {showEmailsPanel && (
+              <div className="mt-3 p-3.5 rounded-xl bg-slate-950/90 border border-slate-800 text-xs space-y-2.5 transition-all">
+                <span className="text-slate-400 text-[11px] block font-medium">
+                  Haga clic en un correo para asignarlo al campo de entrada:
+                </span>
 
                 <div className="space-y-2">
-                  <span className="text-slate-400 text-[11px] block">👥 Usuarios y claves registradas:</span>
-
                   {AUTHORIZED_USERS_LIST.map((user) => (
-                    <div
+                    <button
                       key={user.email}
-                      className="p-2 rounded-lg bg-slate-900/80 border border-slate-800/70 hover:border-slate-700 transition-colors"
+                      type="button"
+                      onClick={() => handleSelectEmail(user.email)}
+                      className="w-full text-left p-2.5 rounded-lg bg-slate-900/80 hover:bg-slate-800/80 border border-slate-800/70 hover:border-slate-700 transition-all cursor-pointer group"
                     >
                       <div className="flex items-center justify-between">
-                        <span className="font-semibold text-white text-xs">{user.name}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleQuickLogin(user.email, '12345678')}
-                          className="text-[10px] bg-blue-600/30 hover:bg-blue-600 text-blue-300 hover:text-white px-2 py-0.5 rounded transition-colors font-medium cursor-pointer"
-                        >
-                          Entrar
-                        </button>
+                        <span className="font-semibold text-white text-xs group-hover:text-blue-300 transition-colors">
+                          {user.name}
+                        </span>
+                        <span className="text-[10px] text-slate-500 group-hover:text-slate-400">
+                          {user.role}
+                        </span>
                       </div>
-                      <div className="text-[11px] text-slate-400 truncate mt-0.5">{user.email}</div>
-                      <div className="text-[10px] text-slate-500 mt-1 flex flex-wrap gap-1 items-center">
-                        <span>Claves activas:</span>
-                        <code className="text-emerald-400 font-mono bg-slate-950 px-1 py-0.5 rounded">12345678</code>
-                        {user.passwords.slice(2, 3).map((p) => (
-                          <code key={p} className="text-amber-400 font-mono bg-slate-950 px-1 py-0.5 rounded">{p}</code>
-                        ))}
+                      <div className="text-[11px] text-blue-400 font-mono mt-0.5 select-all">
+                        {user.email}
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
