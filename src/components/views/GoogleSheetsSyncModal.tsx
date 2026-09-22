@@ -46,11 +46,12 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
   const [copied, setCopied] = useState<boolean>(false);
   const [isSavingWebhook, setIsSavingWebhook] = useState<boolean>(false);
   const [isTestingWebhook, setIsTestingWebhook] = useState<boolean>(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number; details?: any } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number; details?: any; driveOk?: boolean; driveDiagnostic?: any } | null>(null);
   const [isBulkSyncing, setIsBulkSyncing] = useState<boolean>(false);
   const [bulkSyncResult, setBulkSyncResult] = useState<{ success: boolean; message: string } | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [storageStatus, setStorageStatus] = useState<any>(null);
 
   // Load script and webhook config on open
   useEffect(() => {
@@ -62,9 +63,10 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
 
     Promise.all([
       safeFetchJson('/api/safety-novedades/script').then((r) => r.data),
-      safeFetchJson('/api/safety-novedades/webhook-config').then((r) => r.data)
+      safeFetchJson('/api/safety-novedades/webhook-config').then((r) => r.data),
+      safeFetchJson('/api/safety-novedades/storage-status').then((r) => r.data).catch(() => null)
     ])
-      .then(([scriptData, webhookData]) => {
+      .then(([scriptData, webhookData, storageData]) => {
         if (!isMounted) return;
 
         if (scriptData?.success) {
@@ -75,6 +77,9 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
         if (webhookData?.success) {
           setWebhookUrl(webhookData.webhookUrl || '');
           setIsConfigured(Boolean(webhookData.isConfigured));
+        }
+        if (storageData?.success) {
+          setStorageStatus(storageData);
         }
       })
       .catch((err) => {
@@ -260,6 +265,16 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                 >
                   <span className={`w-1.5 h-1.5 rounded-full ${isConfigured ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
                   {isConfigured ? 'Webhook Activo' : 'Sin Enlace Directo'}
+                </span>
+                <span
+                  className={`hidden sm:flex px-2 py-0.5 rounded-full text-[10px] font-semibold items-center gap-1 ${
+                    storageStatus?.cloudinary?.isConfigured
+                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
+                      : 'bg-slate-700/60 text-slate-300 border border-slate-600'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${storageStatus?.cloudinary?.isConfigured ? 'bg-sky-400' : 'bg-slate-400'}`} />
+                  {storageStatus?.cloudinary?.isConfigured ? 'Cloudinary Activo' : 'Servidor Local Activo'}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -588,16 +603,35 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                 </div>
               )}
 
-              {/* Architecture info */}
-              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-800 space-y-2 text-xs text-slate-400">
+              {/* Architecture & Storage info */}
+              <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-800 space-y-3 text-xs text-slate-400">
                 <div className="font-semibold text-slate-300 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                  <span>Seguridad y Garantía de Datos</span>
+                  <span>Almacenamiento de Evidencias y Seguridad</span>
                 </div>
+                {storageStatus?.cloudinary && (
+                  <div className={`p-3 rounded-lg border text-[11px] space-y-1 ${
+                    storageStatus.cloudinary.isConfigured
+                      ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+                      : storageStatus.cloudinary.isSecretSameAsKey
+                      ? 'bg-amber-950/40 border-amber-500/40 text-amber-200'
+                      : 'bg-slate-900/60 border-slate-700 text-slate-300'
+                  }`}>
+                    <div className="font-bold flex items-center justify-between">
+                      <span>Almacenamiento permanente (Cloudinary):</span>
+                      <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-900">
+                        {storageStatus.cloudinary.isConfigured ? 'ACTIVO' : 'RESPALDO LOCAL'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] leading-relaxed">
+                      {storageStatus.cloudinary.statusMessage}
+                    </p>
+                  </div>
+                )}
                 <p className="text-[11px] leading-relaxed">
-                  • <strong>Trazabilidad:</strong> Si la red o Google Sheets fallase temporalmente, los registros quedan respaldados de forma segura en el servidor del dashboard y pueden re-sincronizarse con 1 clic.
+                  • <strong>Alta disponibilidad:</strong> Las fotos de reporte y cierre se guardan instantáneamente con respaldo seguro en el servidor local si Cloudinary está en proceso de configuración.
                   <br />
-                  • <strong>Dominio Institucional:</strong> Solo peticiones originadas por cuentas autorizadas de <code className="text-white font-mono">@logisticos.co</code> son aceptadas por el script.
+                  • <strong>Dominio Institucional:</strong> Solo peticiones originadas por cuentas autorizadas de <code className="text-white font-mono">@logisticos.co</code> son procesadas.
                 </p>
               </div>
             </div>

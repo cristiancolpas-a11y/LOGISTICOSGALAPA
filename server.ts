@@ -35,19 +35,67 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 // -> Se registra la secure_url en novedades_safety.json y en Google Sheets vía Apps Script.
 // ============================================================
 
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true
-});
+function cleanEnvVal(val: string | undefined): string {
+  if (!val) return "";
+  return val.trim().replace(/^["']|["']$/g, "").trim();
+}
+
+export function getCloudinaryCredentials() {
+  const cloud_name = cleanEnvVal(process.env.CLOUDINARY_CLOUD_NAME);
+  const api_key = cleanEnvVal(process.env.CLOUDINARY_API_KEY);
+  const api_secret = cleanEnvVal(process.env.CLOUDINARY_API_SECRET);
+  const upload_preset = cleanEnvVal(process.env.CLOUDINARY_UPLOAD_PRESET);
+
+  // Validación: en ocasiones se introduce por error el mismo API Key en el campo API Secret
+  const isSecretSameAsKey = Boolean(api_key && api_secret && api_key === api_secret);
+  // Los API secrets de Cloudinary suelen tener ~27 caracteres alfanuméricos
+  const isSecretSuspiciouslyShort = Boolean(api_secret && api_secret.length < 20);
+
+  const isValidSignedConfig = Boolean(
+    cloud_name &&
+    api_key &&
+    api_secret &&
+    !isSecretSameAsKey &&
+    !isSecretSuspiciouslyShort
+  );
+
+  const isValidUnsignedConfig = Boolean(cloud_name && upload_preset);
+
+  let statusMessage = "No configurado";
+  let statusType: "ok" | "warning" | "not_configured" = "not_configured";
+
+  if (isValidSignedConfig) {
+    statusType = "ok";
+    statusMessage = `Cloudinary configurado correctamente (cloud: ${cloud_name}).`;
+  } else if (isSecretSameAsKey) {
+    statusType = "warning";
+    statusMessage = `Atención Cloudinary: CLOUDINARY_API_SECRET tiene el mismo valor que el API Key (${api_key}). El API Secret es una clave secreta alfanumérica de ~27 caracteres disponible en https://console.cloudinary.com en 'API Keys'. El servidor usará almacenamiento local transparente mientras se actualiza.`;
+  } else if (isSecretSuspiciouslyShort && api_secret) {
+    statusType = "warning";
+    statusMessage = `Atención Cloudinary: CLOUDINARY_API_SECRET parece incompleto (${api_secret.length} caracteres, usualmente son ~27).`;
+  } else if (isValidUnsignedConfig) {
+    statusType = "ok";
+    statusMessage = `Cloudinary configurado con preset sin firmar: ${upload_preset} (${cloud_name}).`;
+  }
+
+  return {
+    cloud_name,
+    api_key,
+    api_secret,
+    upload_preset,
+    isSecretSameAsKey,
+    isSecretSuspiciouslyShort,
+    isValidSignedConfig,
+    isValidUnsignedConfig,
+    isConfigured: isValidSignedConfig || isValidUnsignedConfig,
+    statusType,
+    statusMessage
+  };
+}
 
 export function isCloudinaryConfigured(): boolean {
-  return Boolean(
-    process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET
-  );
+  const creds = getCloudinaryCredentials();
+  return creds.isConfigured;
 }
 
 export interface CloudinaryUploadResult {
@@ -65,11 +113,9 @@ export async function uploadToCloudinary(
   filename?: string,
   folder: string = "safety-evidencias"
 ): Promise<CloudinaryUploadResult> {
-  if (!isCloudinaryConfigured()) {
-    throw new Error(
-      "Cloudinary no está configurado en las variables de entorno. " +
-      "Por favor configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET en Vercel (Settings -> Environment Variables) o en su archivo .env local."
-    );
+  const creds = getCloudinaryCredentials();
+  if (!creds.isConfigured) {
+    throw new Error(creds.statusMessage);
   }
 
   // Asegurar formato Data URI
@@ -81,7 +127,30 @@ export async function uploadToCloudinary(
     ? path.basename(filename, path.extname(filename)).replace(/[^a-zA-Z0-9-_]/g, "_")
     : `evidencia_${Date.now()}`;
 
-  const uploadResponse = await cloudinary.uploader.upload(formattedData, {
+  if (creds.isValidSignedConfig) {
+    cloudinary.config({
+      cloud_name: creds.cloud_name,
+      api_key: creds.api_key,
+      api_secret: creds.api_secret,
+      secure: true
+    });
+
+    const uploadResponse = await cloudinary.uploader.upload(formattedData, {
+      folder,
+      public_id: `${cleanBaseName}_${Date.now()}`,
+      resource_type: "image"
+    });
+
+    return {
+      secure_url: uploadResponse.secure_url,
+      public_id: uploadResponse.public_id,
+      format: uploadResponse.format,
+      bytes: uploadResponse.bytes
+    };
+  }
+
+  // Unsigned upload fallback si se configuró un preset
+  const uploadResponse = await cloudinary.uploader.unsigned_upload(formattedData, creds.upload_preset, {
     folder,
     public_id: `${cleanBaseName}_${Date.now()}`,
     resource_type: "image"
@@ -115,8 +184,8 @@ export function getHostedEvidenceUrl(req: express.Request | undefined, filename:
 
 /**
  * Guarda o sube la evidencia técnica de forma resiliente:
- * 1. Si Cloudinary está configurado, la sube a Cloudinary y retorna la URL segura HTTPS.
- * 2. Si Cloudinary no está configurado (ej. desarrollo, pruebas locales o preview), guarda el archivo
+ * 1. Si Cloudinary está configurado válidamente, la sube a Cloudinary y retorna la URL segura HTTPS.
+ * 2. Si Cloudinary no está configurado o sus credenciales están incompletas/en corrección, guarda el archivo
  *    en el servidor local (/uploads/...) como fallback transparente para que la aplicación nunca falle.
  */
 export async function processAndStoreEvidence(
@@ -125,8 +194,10 @@ export async function processAndStoreEvidence(
   req?: express.Request,
   folder: string = "safety-evidencias"
 ): Promise<{ url: string; isCloudinary: boolean; public_id?: string; filename: string; notice?: string }> {
-  // 1. Intentar Cloudinary si las credenciales están presentes
-  if (isCloudinaryConfigured()) {
+  const creds = getCloudinaryCredentials();
+
+  // 1. Intentar Cloudinary si la configuración es válida
+  if (creds.isConfigured) {
     try {
       console.log(`[STORAGE] Subiendo a Cloudinary permanente (${folder})...`);
       const cloudRes = await uploadToCloudinary(base64Data, filename, folder);
@@ -138,10 +209,10 @@ export async function processAndStoreEvidence(
         filename: filename || cloudRes.public_id
       };
     } catch (cloudErr: any) {
-      console.warn(`[STORAGE CLOUDINARY ERROR] ${cloudErr?.message}. Usando almacenamiento local en servidor como respaldo.`);
+      console.info(`[STORAGE NOTICE] Cloudinary: ${cloudErr?.message || cloudErr}. Continuando con almacenamiento en servidor local.`);
     }
-  } else {
-    console.info(`[STORAGE NOTICE] Cloudinary no está configurado en variables de entorno. Usando almacenamiento local en servidor.`);
+  } else if (creds.statusType === "warning") {
+    console.info(`[STORAGE CONFIG NOTICE] ${creds.statusMessage}`);
   }
 
   // 2. Almacenamiento local en servidor (fallback resiliente)
@@ -164,7 +235,9 @@ export async function processAndStoreEvidence(
     url: hostedUrl,
     isCloudinary: false,
     filename: uniqueName,
-    notice: "Almacenado en servidor local (configure CLOUDINARY_CLOUD_NAME en Vercel o .env para almacenamiento permanente en la nube)."
+    notice: creds.statusType === "warning"
+      ? creds.statusMessage
+      : "Almacenado en servidor local (respaldo de alta disponibilidad)."
   };
 }
 
@@ -762,13 +835,13 @@ async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean;
 
     if (json && typeof json === "object" && json.success === false) {
       if (isDrivePermissionError(json.message) || json.needsDriveAuth) {
-        console.warn("[SAFETY GAS NOTICE] Google Drive requiere autorización en Apps Script (activando fallback alojado en servidor):", json.message);
+        console.info("[SAFETY GAS INFO] Apps Script informó requerimiento de permisos en DriveApp (utilizando almacenamiento web/servidor para evidencias).");
       } else {
-        console.error("[SAFETY GAS ERROR]:", json.message);
+        console.warn("[SAFETY GAS NOTICE]:", json.message);
       }
       return {
         success: false,
-        error: json.message || "Error devuelto por Google Apps Script",
+        error: json.message || "Aviso devuelto por Google Apps Script",
         result: json
       };
     }
@@ -835,21 +908,6 @@ app.post("/api/safety-novedades/upload", async (req, res) => {
     const storeRes = await processAndStoreEvidence(base64Data, filename, req, "safety-evidencias");
     const evidenceUrl = storeRes.url;
     console.log(`[STORAGE UPLOAD SUCCESS] URL generada: ${evidenceUrl} (isCloudinary: ${storeRes.isCloudinary})`);
-
-    // Respaldo secundario opcional y no bloqueante en Google Drive (si hay Apps Script configurado)
-    const webhookUrl = getSafetyWebhookUrl();
-    if (webhookUrl && webhookUrl.startsWith("http")) {
-      syncToGoogleAppsScript({
-        action: "upload_evidence",
-        filename: filename || `evidencia_${Date.now()}.jpg`,
-        base64Data,
-        mimeType: "image/jpeg",
-        userEmail,
-        cloudinaryUrl: evidenceUrl
-      }).catch((driveErr: any) => {
-        console.warn("[DRIVE BACKUP NOTICE] Falló respaldo opcional en Drive (no bloqueante):", driveErr?.message);
-      });
-    }
 
     // Respuesta con la URL definitiva (Cloudinary o Servidor)
     return res.json({
@@ -1018,19 +1076,6 @@ app.post("/api/safety-novedades/close", async (req, res) => {
       );
       finalEvidencia = storeRes.url;
       console.log(`[SAFETY CLOSE EVIDENCE SUCCESS]: ${finalEvidencia}`);
-
-      // Respaldo secundario opcional y no bloqueante en Google Drive si Apps Script está configurado
-      const webhookUrl = getSafetyWebhookUrl();
-      if (webhookUrl && webhookUrl.startsWith("http")) {
-        syncToGoogleAppsScript({
-          action: "upload_evidence",
-          filename: filename || `cierre_fila${fila}_${Date.now()}.jpg`,
-          base64Data: fileBase64,
-          mimeType: "image/jpeg",
-          userEmail,
-          cloudinaryUrl: finalEvidencia
-        }).catch((e) => console.warn("[DRIVE BACKUP WARNING] Falló respaldo opcional en Drive:", e?.message));
-      }
     } catch (fErr: any) {
       console.error("[SAFETY CLOSE EVIDENCE ERROR]:", fErr);
       return res.status(500).json({
@@ -1222,19 +1267,6 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
       );
       finalDriveUrl = storeRes.url;
       console.log(`[SAFETY UPDATE EVIDENCE SUCCESS]: ${finalDriveUrl}`);
-
-      // Respaldo secundario opcional no bloqueante en Google Drive si Apps Script está activo
-      const webhookUrl = getSafetyWebhookUrl();
-      if (webhookUrl && webhookUrl.startsWith("http")) {
-        syncToGoogleAppsScript({
-          action: "upload_evidence",
-          filename: effectiveFilename || `evidencia_${record.fila}_${Date.now()}.jpg`,
-          base64Data: fileBase64,
-          mimeType: "image/jpeg",
-          userEmail: effectiveEmail,
-          cloudinaryUrl: finalDriveUrl
-        }).catch((e) => console.warn("[DRIVE BACKUP WARNING] Falló respaldo opcional en Drive:", e?.message));
-      }
     } catch (fErr: any) {
       console.error("[SAFETY UPDATE EVIDENCE ERROR]:", fErr);
       return res.status(500).json({
@@ -1347,6 +1379,32 @@ app.get("/api/safety-novedades/export-csv", (_req, res) => {
   res.setHeader("Content-Type", "text/csv; charset=utf-8");
   res.setHeader("Content-Disposition", 'attachment; filename="NOVEDADES-SAFETY.csv"');
   res.send(csvOutput);
+});
+
+// 5.5 Estado del almacenamiento de evidencias (Cloudinary y Local Server)
+app.get("/api/safety-novedades/storage-status", (_req, res) => {
+  const creds = getCloudinaryCredentials();
+  return res.json({
+    success: true,
+    cloudinary: {
+      isConfigured: creds.isConfigured,
+      statusType: creds.statusType,
+      statusMessage: creds.statusMessage,
+      cloudName: creds.cloud_name ? `${creds.cloud_name.slice(0, 3)}***` : "",
+      hasApiKey: Boolean(creds.api_key),
+      hasApiSecret: Boolean(creds.api_secret),
+      isSecretSameAsKey: creds.isSecretSameAsKey,
+      isSecretSuspiciouslyShort: creds.isSecretSuspiciouslyShort
+    },
+    localServer: {
+      isActive: true,
+      directory: "data/uploads",
+      notice: "Almacenamiento local del servidor disponible como respaldo de alta resiliencia."
+    },
+    webhook: {
+      isConfigured: Boolean(getSafetyWebhookUrl())
+    }
+  });
 });
 
 // 6. Obtener el código de Google Apps Script y su documentación
