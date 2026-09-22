@@ -113,7 +113,6 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
   const [imgError, setImgError] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [viewMode, setViewMode] = useState<'image' | 'iframe'>('image');
-  const [activeImageSrc, setActiveImageSrc] = useState<string>('');
   const [driveCdnIndex, setDriveCdnIndex] = useState<number>(0);
 
   const normalizedUrl = normalizeEvidenceUrl(url);
@@ -125,6 +124,16 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
   const driveThumbnailUrl = fileId ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600` : null;
   const driveLh3Url = fileId ? `https://lh3.googleusercontent.com/d/${fileId}` : null;
   const driveDirectUrl = fileId ? `https://drive.google.com/uc?export=view&id=${fileId}` : null;
+
+  const [activeImageSrc, setActiveImageSrc] = useState<string | null>(() => {
+    if (!url) return null;
+    const norm = normalizeEvidenceUrl(url);
+    const fId = extractDriveFileId(url) || extractDriveFileId(norm);
+    if (fId || url.includes('drive.google.com') || url.includes('docs.google.com')) {
+      return fId ? `https://drive.google.com/thumbnail?id=${fId}&sz=w1600` : (norm || null);
+    }
+    return norm || null;
+  });
 
   // URL resuelta para abrir en pestaña nueva o copiar
   const fullExternalUrl = normalizedUrl.startsWith('/uploads/') && typeof window !== 'undefined'
@@ -144,10 +153,10 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
 
       if (isDriveUrl) {
         // En Drive, intentar primero con el endpoint de thumbnail de alta resolución
-        setActiveImageSrc(driveThumbnailUrl || driveLh3Url || driveDirectUrl || normalizedUrl);
+        setActiveImageSrc(driveThumbnailUrl || driveLh3Url || driveDirectUrl || normalizedUrl || null);
         setViewMode('image');
       } else {
-        setActiveImageSrc(normalizedUrl);
+        setActiveImageSrc(normalizedUrl || null);
         setViewMode('image');
       }
     }
@@ -202,8 +211,8 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
       setImgError(true);
       setErrorMessage('Este archivo en Google Drive tiene restricciones de acceso o requiere permisos de tu cuenta.');
     } else {
-      // Si falló una URL relativa /uploads/, intentar con origen absoluto
-      if (activeImageSrc.startsWith('/uploads/') && typeof window !== 'undefined') {
+      // Si falló una URL relativa /uploads/, intentar con origen absoluto sólo si no es ya absoluto
+      if (activeImageSrc && typeof activeImageSrc === 'string' && activeImageSrc.startsWith('/uploads/') && typeof window !== 'undefined') {
         const absoluteUrl = `${window.location.origin}${activeImageSrc}`;
         if (activeImageSrc !== absoluteUrl) {
           setImgLoading(true);
@@ -362,7 +371,7 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
             </button>
 
             <a
-              href={url}
+              href={fullExternalUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-[11px] font-bold inline-flex items-center gap-1 border border-blue-500/30 transition-colors"
@@ -387,20 +396,22 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
                 </div>
               )}
 
-              {/* Si falla la carga directa por imagen, mostramos opción o pasamos al visor embed */}
+              {/* Si falla la carga directa por imagen, mostramos opción contextual */}
               {imgError ? (
                 <div className="text-center p-6 max-w-md space-y-3 bg-slate-900/80 rounded-2xl border border-slate-800">
                   <AlertTriangle className="w-10 h-10 text-amber-400 mx-auto" />
                   <div>
                     <h4 className="text-xs font-bold text-white mb-1">
-                      Visualización protegida o enlace restringido
+                      {isDriveUrl ? 'Visualización protegida o enlace restringido' : 'No se pudo cargar la imagen'}
                     </h4>
                     <p className="text-[11px] text-slate-400 leading-relaxed">
-                      El archivo se encuentra en Google Drive. Puedes abrir el visor integrado directamente en esta ventana o abrirlo en Google Drive.
+                      {errorMessage || (isDriveUrl
+                        ? 'El archivo se encuentra en Google Drive. Puedes abrir el visor integrado directamente en esta ventana o abrirlo en Google Drive.'
+                        : 'No fue posible mostrar la imagen directamente. Puedes intentar recargarla o abrirla en una pestaña nueva.')}
                     </p>
                   </div>
                   <div className="flex items-center justify-center gap-2 pt-2">
-                    {driveEmbedUrl && (
+                    {isDriveUrl && driveEmbedUrl && (
                       <button
                         type="button"
                         onClick={() => {
@@ -413,18 +424,32 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
                         <span>Abrir Visor Integrado</span>
                       </button>
                     )}
+                    {!isDriveUrl && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImgError(false);
+                          setImgLoading(true);
+                          setActiveImageSrc(normalizedUrl || null);
+                        }}
+                        className="px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold inline-flex items-center gap-1.5"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" />
+                        <span>Reintentar</span>
+                      </button>
+                    )}
                     <a
-                      href={url}
+                      href={fullExternalUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold inline-flex items-center gap-1.5 border border-slate-700"
                     >
-                      <span>Abrir en Google Drive</span>
+                      <span>{isDriveUrl ? 'Abrir en Google Drive' : 'Abrir original'}</span>
                       <ExternalLink className="w-3.5 h-3.5" />
                     </a>
                   </div>
                 </div>
-              ) : (
+              ) : activeImageSrc ? (
                 <div
                   className="flex items-center justify-center w-full h-full transition-transform duration-150 ease-out"
                   style={{
@@ -432,32 +457,15 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
                   }}
                 >
                   <img
-                    src={computedImageUrl}
+                    src={activeImageSrc}
                     alt={title}
                     className="max-h-[56vh] max-w-full object-contain rounded-xl shadow-2xl border border-slate-800/80"
                     referrerPolicy="no-referrer"
                     onLoad={() => setImgLoading(false)}
-                    onError={() => {
-                      setImgLoading(false);
-                      // Si falla el primer CDN de Drive (lh3), probamos el thumbnail o pasamos a iframe
-                      if (isDriveUrl && computedImageUrl === driveLh3Url && driveThumbnailUrl) {
-                        // Reintenta con thumbnail
-                        const img = new Image();
-                        img.onload = () => {
-                          // Si thumbnail funciona se actualiza
-                          setImgLoading(false);
-                        };
-                        img.onerror = () => {
-                          setImgError(true);
-                        };
-                        img.src = driveThumbnailUrl;
-                      } else {
-                        setImgError(true);
-                      }
-                    }}
+                    onError={handleImageError}
                   />
                 </div>
-              )}
+              ) : null}
             </>
           )}
 

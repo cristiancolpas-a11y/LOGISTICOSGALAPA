@@ -361,11 +361,13 @@ export const EvidenceCollageUploader: React.FC<EvidenceCollageUploaderProps> = (
                 key={item.id}
                 className="relative group rounded-xl overflow-hidden border border-slate-700 bg-slate-800/80 aspect-video flex items-center justify-center p-1"
               >
-                <img
-                  src={item.dataUrl}
-                  alt={`Foto ${idx + 1}`}
-                  className="w-full h-full object-contain rounded"
-                />
+                {item.dataUrl ? (
+                  <img
+                    src={item.dataUrl}
+                    alt={`Foto ${idx + 1}`}
+                    className="w-full h-full object-contain rounded"
+                  />
+                ) : null}
 
                 {/* Badge Number */}
                 <div className="absolute top-1 left-1 px-1.5 py-0.5 rounded bg-black/70 text-white font-mono text-[10px] font-bold">
@@ -454,11 +456,13 @@ export const EvidenceCollageUploader: React.FC<EvidenceCollageUploaderProps> = (
             onClick={() => setPreviewZoomOpen(true)}
             className="relative rounded-xl overflow-hidden border border-slate-700 bg-slate-950 flex items-center justify-center cursor-pointer group max-h-[320px]"
           >
-            <img
-              src={collageResult.dataUrl}
-              alt="Collage de evidencia generado"
-              className="max-h-[320px] w-auto max-w-full object-contain"
-            />
+            {collageResult.dataUrl ? (
+              <img
+                src={collageResult.dataUrl}
+                alt="Collage de evidencia generado"
+                className="max-h-[320px] w-auto max-w-full object-contain"
+              />
+            ) : null}
 
             {/* Hover overlay hint */}
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white text-xs font-semibold">
@@ -505,11 +509,13 @@ export const EvidenceCollageUploader: React.FC<EvidenceCollageUploaderProps> = (
           </div>
 
           <div className="flex-1 flex items-center justify-center overflow-auto p-4">
-            <img
-              src={collageResult.dataUrl}
-              alt="Collage ampliado"
-              className="max-h-full max-w-full object-contain rounded-lg border border-slate-700 shadow-2xl bg-white"
-            />
+            {collageResult.dataUrl ? (
+              <img
+                src={collageResult.dataUrl}
+                alt="Collage ampliado"
+                className="max-h-full max-w-full object-contain rounded-lg border border-slate-700 shadow-2xl bg-white"
+              />
+            ) : null}
           </div>
 
           <div className="pt-2 text-center text-xs text-slate-400">
