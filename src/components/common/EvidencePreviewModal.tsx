@@ -9,11 +9,10 @@ import {
   RotateCw,
   Copy,
   Check,
-  Maximize2,
   FileText,
   AlertTriangle,
   Loader2,
-  Share2
+  Cloud
 } from 'lucide-react';
 import { SafetyNovedadRecord } from '../../types';
 
@@ -27,25 +26,14 @@ export interface EvidencePreviewModalProps {
 }
 
 /**
- * Normaliza cualquier URL de evidencia (uploads locales, enlaces con http, dominios de preview, etc.)
- * para que siempre sea compatible con el protocolo y origen actual de la aplicación.
+ * Normaliza cualquier URL de evidencia (Cloudinary, Drive, base64, etc.)
+ * para que siempre sea compatible con HTTPS.
  */
 export function normalizeEvidenceUrl(rawUrl: string): string {
   if (!rawUrl) return '';
   const trimmed = rawUrl.trim();
 
-  // 1. Archivos locales almacenados en el servidor (/uploads/...)
-  if (trimmed.includes('/uploads/')) {
-    const idx = trimmed.indexOf('/uploads/');
-    return trimmed.substring(idx);
-  }
-
-  // 2. Base64 data URLs
-  if (trimmed.startsWith('data:image/')) {
-    return trimmed;
-  }
-
-  // 3. Si el navegador corre bajo HTTPS y la URL viene con HTTP inseguro, elevar a HTTPS para evitar bloqueo de contenido mixto
+  // 1. URLs de Cloudinary o externas que vengan con http insecure -> elevar a https
   if (trimmed.startsWith('http://') && typeof window !== 'undefined' && window.location.protocol === 'https:') {
     return trimmed.replace(/^http:\/\//, 'https://');
   }
@@ -113,34 +101,32 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
   const [imgError, setImgError] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [viewMode, setViewMode] = useState<'image' | 'iframe'>('image');
-  const [driveCdnIndex, setDriveCdnIndex] = useState<number>(0);
 
   const normalizedUrl = normalizeEvidenceUrl(url);
   const fileId = extractDriveFileId(url) || extractDriveFileId(normalizedUrl);
   const isDriveUrl = !!fileId || url.includes('drive.google.com') || url.includes('docs.google.com');
+  const isCloudinary = normalizedUrl.includes('cloudinary.com');
+  const isLocalUpload = normalizedUrl.includes('/uploads/');
 
-  // CDNs y endpoints de Google Drive
+  // Solo para compatibilidad con registros antiguos de Google Drive
   const driveEmbedUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : null;
   const driveThumbnailUrl = fileId ? `https://drive.google.com/thumbnail?id=${fileId}&sz=w1600` : null;
-  const driveLh3Url = fileId ? `https://lh3.googleusercontent.com/d/${fileId}` : null;
-  const driveDirectUrl = fileId ? `https://drive.google.com/uc?export=view&id=${fileId}` : null;
 
   const [activeImageSrc, setActiveImageSrc] = useState<string | null>(() => {
     if (!url) return null;
     const norm = normalizeEvidenceUrl(url);
     const fId = extractDriveFileId(url) || extractDriveFileId(norm);
-    if (fId || url.includes('drive.google.com') || url.includes('docs.google.com')) {
-      return fId ? `https://drive.google.com/thumbnail?id=${fId}&sz=w1600` : (norm || null);
+    if (fId) {
+      return `https://drive.google.com/thumbnail?id=${fId}&sz=w1600`;
     }
     return norm || null;
   });
 
-  // URL resuelta para abrir en pestaña nueva o copiar
-  const fullExternalUrl = normalizedUrl.startsWith('/uploads/') && typeof window !== 'undefined'
+  const fullExternalUrl = normalizedUrl.startsWith('/') && typeof window !== 'undefined'
     ? `${window.location.origin}${normalizedUrl}`
     : normalizedUrl;
 
-  // Inicializar origen y estados cuando se abre la modal o cambia la URL
+  // Inicializar estado cuando se abre la modal o cambia la URL
   useEffect(() => {
     if (isOpen) {
       setZoom(1);
@@ -149,18 +135,18 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
       setImgLoading(true);
       setImgError(false);
       setErrorMessage('');
-      setDriveCdnIndex(0);
 
-      if (isDriveUrl) {
-        // En Drive, intentar primero con el endpoint de thumbnail de alta resolución
-        setActiveImageSrc(driveThumbnailUrl || driveLh3Url || driveDirectUrl || normalizedUrl || null);
+      if (isDriveUrl && fileId) {
+        // Compatibilidad legada: enlace de Google Drive
+        setActiveImageSrc(driveThumbnailUrl || normalizedUrl || null);
         setViewMode('image');
       } else {
+        // Enlace directo de Cloudinary o imagen estándar / servidor
         setActiveImageSrc(normalizedUrl || null);
         setViewMode('image');
       }
     }
-  }, [isOpen, url, normalizedUrl, isDriveUrl, driveThumbnailUrl, driveLh3Url, driveDirectUrl]);
+  }, [isOpen, url, normalizedUrl, isDriveUrl, fileId, driveThumbnailUrl]);
 
   if (!isOpen) return null;
 
@@ -186,32 +172,16 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
     setImgLoading(false);
 
     if (isDriveUrl) {
-      // Alternar entre CDNs de Drive: thumbnail -> lh3 -> iframe automático
-      if (driveCdnIndex === 0 && driveLh3Url && activeImageSrc !== driveLh3Url) {
-        setDriveCdnIndex(1);
-        setImgLoading(true);
-        setActiveImageSrc(driveLh3Url);
-        return;
-      }
-      if (driveCdnIndex <= 1 && driveDirectUrl && activeImageSrc !== driveDirectUrl) {
-        setDriveCdnIndex(2);
-        setImgLoading(true);
-        setActiveImageSrc(driveDirectUrl);
-        return;
-      }
-
-      // Si los CDNs directos de Drive fallan (por permisos o cookies de terceros),
-      // conmutamos automáticamente al visor IFRAME nativo de Google Drive para previsualizarlo sin fricción
+      // Si falló el thumbnail directo de Google Drive, pasar al visor iframe nativo
       if (driveEmbedUrl) {
         setViewMode('iframe');
         setImgError(false);
         return;
       }
-
       setImgError(true);
-      setErrorMessage('Este archivo en Google Drive tiene restricciones de acceso o requiere permisos de tu cuenta.');
+      setErrorMessage('Este archivo en Google Drive tiene restricciones de acceso.');
     } else {
-      // Si falló una URL relativa /uploads/, intentar con origen absoluto sólo si no es ya absoluto
+      // Si falló una URL relativa /uploads/, intentar con origen absoluto
       if (activeImageSrc && typeof activeImageSrc === 'string' && activeImageSrc.startsWith('/uploads/') && typeof window !== 'undefined') {
         const absoluteUrl = `${window.location.origin}${activeImageSrc}`;
         if (activeImageSrc !== absoluteUrl) {
@@ -220,9 +190,9 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
           return;
         }
       }
-
+      // Imagen de Cloudinary o URL directa
       setImgError(true);
-      setErrorMessage('No se pudo cargar la imagen desde el servidor. Puedes abrir el enlace original en una pestaña nueva.');
+      setErrorMessage('No se pudo cargar la imagen. Verifique la conexión o abra el enlace original en una pestaña nueva.');
     }
   };
 
@@ -264,6 +234,20 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
                 >
                   {isReporte ? 'EVIDENCIA REPORTE (COLUMNA D)' : 'EVIDENCIA CORREGIDA (COLUMNA E)'}
                 </span>
+                {isCloudinary ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-sky-500/20 text-sky-300 border-sky-500/30 flex items-center gap-1">
+                    <Cloud className="w-3 h-3" />
+                    <span>Cloudinary</span>
+                  </span>
+                ) : isLocalUpload ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-indigo-500/20 text-indigo-300 border-indigo-500/30 flex items-center gap-1">
+                    <span>Servidor Local</span>
+                  </span>
+                ) : isDriveUrl ? (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-amber-500/20 text-amber-300 border-amber-500/30 flex items-center gap-1">
+                    <span>Google Drive</span>
+                  </span>
+                ) : null}
               </div>
               {record && (
                 <p className="text-[11px] text-slate-400 truncate">
@@ -377,7 +361,7 @@ export const EvidencePreviewModal: React.FC<EvidencePreviewModalProps> = ({
               className="px-2.5 py-1 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-[11px] font-bold inline-flex items-center gap-1 border border-blue-500/30 transition-colors"
               title="Abrir en pestaña nueva"
             >
-              <span>{isDriveUrl ? 'Abrir en Drive' : 'Abrir original'}</span>
+              <span>{isDriveUrl ? 'Abrir en Drive' : (isCloudinary ? 'Ver en Cloudinary' : 'Abrir original')}</span>
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>

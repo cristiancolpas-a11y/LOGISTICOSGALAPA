@@ -4,6 +4,7 @@ import https from "https";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
+import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 
@@ -15,12 +16,159 @@ app.set("trust proxy", true);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// Static uploads directory for images and evidence files
+// ============================================================
+// CONFIGURACIÓN DE CLOUDINARY (ALMACENAMIENTO PERMANENTE)
+// ============================================================
+// NOTA IMPORTANTE PARA DESPLIEGUE EN VERCEL:
+// En Vercel el sistema de archivos es efímero y de solo lectura; todo archivo escrito
+// en disco desaparece al terminar la solicitud HTTP. Por eso las imágenes y collages
+// de evidencia técnica se suben y almacenan permanentemente en Cloudinary.
+//
+// Variables de entorno requeridas en Vercel (Panel -> Settings -> Environment Variables)
+// y en el archivo .env local:
+// 1. CLOUDINARY_CLOUD_NAME
+// 2. CLOUDINARY_API_KEY
+// 3. CLOUDINARY_API_SECRET
+//
+// Flujo:
+// Cliente (Base64) -> Servidor -> Cloudinary (uploader.upload) -> secure_url (HTTPS pública)
+// -> Se registra la secure_url en novedades_safety.json y en Google Sheets vía Apps Script.
+// ============================================================
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true
+});
+
+export function isCloudinaryConfigured(): boolean {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  );
+}
+
+export interface CloudinaryUploadResult {
+  secure_url: string;
+  public_id: string;
+  format?: string;
+  bytes?: number;
+}
+
+/**
+ * Sube una imagen en Base64 directamente a Cloudinary sin tocar el disco efímero.
+ */
+export async function uploadToCloudinary(
+  base64Data: string,
+  filename?: string,
+  folder: string = "safety-evidencias"
+): Promise<CloudinaryUploadResult> {
+  if (!isCloudinaryConfigured()) {
+    throw new Error(
+      "Cloudinary no está configurado en las variables de entorno. " +
+      "Por favor configure CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET en Vercel (Settings -> Environment Variables) o en su archivo .env local."
+    );
+  }
+
+  // Asegurar formato Data URI
+  const formattedData = base64Data.startsWith("data:")
+    ? base64Data
+    : `data:image/jpeg;base64,${base64Data}`;
+
+  const cleanBaseName = filename
+    ? path.basename(filename, path.extname(filename)).replace(/[^a-zA-Z0-9-_]/g, "_")
+    : `evidencia_${Date.now()}`;
+
+  const uploadResponse = await cloudinary.uploader.upload(formattedData, {
+    folder,
+    public_id: `${cleanBaseName}_${Date.now()}`,
+    resource_type: "image"
+  });
+
+  return {
+    secure_url: uploadResponse.secure_url,
+    public_id: uploadResponse.public_id,
+    format: uploadResponse.format,
+    bytes: uploadResponse.bytes
+  };
+}
+
+// Directorio de uploads local como respaldo/fallback para desarrollo y entornos donde Cloudinary aún no está configurado
 const UPLOADS_DIR = path.join(process.cwd(), "data", "uploads");
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+export function getHostedEvidenceUrl(req: express.Request | undefined, filename: string): string {
+  if (req) {
+    const rawHost = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
+    const host = rawHost.split(",")[0].trim();
+    const isLocalhost = host.includes("localhost") || host.includes("127.0.0.1");
+    const rawProto = req.get("x-forwarded-proto") || req.protocol;
+    const proto = isLocalhost ? (rawProto || "http") : "https";
+    return `${proto}://${host}/uploads/${filename}`;
+  }
+  return `/uploads/${filename}`;
+}
+
+/**
+ * Guarda o sube la evidencia técnica de forma resiliente:
+ * 1. Si Cloudinary está configurado, la sube a Cloudinary y retorna la URL segura HTTPS.
+ * 2. Si Cloudinary no está configurado (ej. desarrollo, pruebas locales o preview), guarda el archivo
+ *    en el servidor local (/uploads/...) como fallback transparente para que la aplicación nunca falle.
+ */
+export async function processAndStoreEvidence(
+  base64Data: string,
+  filename: string | undefined,
+  req?: express.Request,
+  folder: string = "safety-evidencias"
+): Promise<{ url: string; isCloudinary: boolean; public_id?: string; filename: string; notice?: string }> {
+  // 1. Intentar Cloudinary si las credenciales están presentes
+  if (isCloudinaryConfigured()) {
+    try {
+      console.log(`[STORAGE] Subiendo a Cloudinary permanente (${folder})...`);
+      const cloudRes = await uploadToCloudinary(base64Data, filename, folder);
+      console.log(`[STORAGE CLOUDINARY OK] ${cloudRes.secure_url}`);
+      return {
+        url: cloudRes.secure_url,
+        isCloudinary: true,
+        public_id: cloudRes.public_id,
+        filename: filename || cloudRes.public_id
+      };
+    } catch (cloudErr: any) {
+      console.warn(`[STORAGE CLOUDINARY ERROR] ${cloudErr?.message}. Usando almacenamiento local en servidor como respaldo.`);
+    }
+  } else {
+    console.info(`[STORAGE NOTICE] Cloudinary no está configurado en variables de entorno. Usando almacenamiento local en servidor.`);
+  }
+
+  // 2. Almacenamiento local en servidor (fallback resiliente)
+  const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  const ext = filename ? path.extname(filename) || ".jpg" : ".jpg";
+  const cleanBaseName = (filename ? path.basename(filename, ext) : "evidencia").replace(/[^a-zA-Z0-9-_]/g, "_");
+  const uniqueName = `evidencia_${Date.now()}_${cleanBaseName}${ext}`;
+  const filePath = path.join(UPLOADS_DIR, uniqueName);
+
+  const buffer = matches ? Buffer.from(matches[2], "base64") : Buffer.from(base64Data, "base64");
+  if (!buffer || buffer.length === 0) {
+    throw new Error("El archivo de evidencia recibido está vacío (0 bytes).");
+  }
+
+  fs.writeFileSync(filePath, buffer);
+  const hostedUrl = getHostedEvidenceUrl(req, uniqueName);
+  console.log(`[STORAGE LOCAL OK] Guardado en servidor: ${hostedUrl} (${buffer.length} bytes)`);
+
+  return {
+    url: hostedUrl,
+    isCloudinary: false,
+    filename: uniqueName,
+    notice: "Almacenado en servidor local (configure CLOUDINARY_CLOUD_NAME en Vercel o .env para almacenamiento permanente en la nube)."
+  };
+}
+
+// Ruta para servir archivos de evidencia locales con fallback visual de alta fidelidad
 app.get("/uploads/:filename", (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(UPLOADS_DIR, filename);
@@ -32,6 +180,16 @@ app.get("/uploads/:filename", (req, res) => {
       res.setHeader("Cache-Control", "public, max-age=3600");
       return res.send(fileBuffer);
     }
+    const ext = path.extname(filename).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".svg": "image/svg+xml"
+    };
+    res.setHeader("Content-Type", mimeTypes[ext] || "image/jpeg");
+    res.setHeader("Cache-Control", "public, max-age=86400");
     return res.sendFile(filePath);
   }
 
@@ -139,6 +297,7 @@ app.get("/uploads/:filename", (req, res) => {
   res.setHeader("Cache-Control", "public, max-age=3600");
   res.send(svg);
 });
+
 
 const DEFAULT_SHEET_ID = "18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk";
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || DEFAULT_SHEET_ID;
@@ -539,15 +698,6 @@ function isDrivePermissionError(errorMsg?: string): boolean {
   );
 }
 
-function getHostedEvidenceUrl(req: express.Request, filename: string): string {
-  const rawHost = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
-  const host = rawHost.split(",")[0].trim();
-  const isLocalhost = host.includes("localhost") || host.includes("127.0.0.1");
-  const rawProto = req.get("x-forwarded-proto") || req.protocol;
-  const proto = isLocalhost ? (rawProto || "http") : "https";
-  return `${proto}://${host}/uploads/${filename}`;
-}
-
 async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean; result?: any; error?: string; skipped?: boolean }> {
   const webhookUrl = getSafetyWebhookUrl();
   if (!webhookUrl || !webhookUrl.startsWith("http")) {
@@ -646,13 +796,27 @@ app.get("/api/safety-novedades", (_req, res) => {
   });
 });
 
-// 2. Subida de archivo de evidencia (fotos, reportes, comprobantes)
-// ORDEN DE EJECUCIÓN ESTRICTO:
-// Sube el archivo a Google Drive y solo devuelve el link real confirmado por DriveApp.
-// Si falla la subida a Drive, se detiene y devuelve error 502 sin generar links predictivos ficticios.
+// ============================================================
+// 2. Subida de archivo de evidencia (Fotos, Collages, Comprobantes)
+// ============================================================
+// NUEVO FLUJO MIGRADO A CLOUDINARY (PERMANENCIA EN VERCEL):
+// 1. Cliente envía imagen en base64 y correo institucional.
+// 2. Servidor valida correo de dominio @logisticos.co.
+// 3. Servidor sube directamente a Cloudinary (folder: "safety-evidencias").
+// 4. Cloudinary devuelve una URL segura HTTPS permanente (secure_url).
+// 5. La secure_url se devuelve al cliente para ser almacenada en la hoja y registros.
+// 6. (Opcional/No bloqueante) Si hay Apps Script configurado, se envía respaldo secundario a Drive.
+//
+// NOTA IMPORTANTE PARA VERCEL:
+// Configurar las variables en Vercel Dashboard (Project Settings -> Environment Variables):
+// - CLOUDINARY_CLOUD_NAME
+// - CLOUDINARY_API_KEY
+// - CLOUDINARY_API_SECRET
+// ============================================================
 app.post("/api/safety-novedades/upload", async (req, res) => {
   const { filename, base64Data, userEmail } = req.body || {};
 
+  // Validación de correo institucional
   if (!isValidInstitutionalEmail(userEmail)) {
     return res.status(403).json({
       success: false,
@@ -665,96 +829,47 @@ app.post("/api/safety-novedades/upload", async (req, res) => {
   }
 
   try {
-    const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    const mimeType = matches ? matches[1] : "image/jpeg";
-    const ext = filename ? path.extname(filename) || ".jpg" : ".jpg";
-    const cleanBaseName = (filename ? path.basename(filename, ext) : "evidencia").replace(/[^a-zA-Z0-9-_]/g, "_");
-    const uniqueName = `evidencia_${Date.now()}_${cleanBaseName}${ext}`;
-    const filePath = path.join(UPLOADS_DIR, uniqueName);
+    console.log(`[STORAGE UPLOAD] Procesando evidencia (usuario: ${userEmail}, filename: ${filename || 'sin_nombre'})...`);
 
-    const buffer = matches ? Buffer.from(matches[2], "base64") : Buffer.from(base64Data, "base64");
-    if (!buffer || buffer.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "El archivo recibido está vacío (0 bytes)."
-      });
-    }
+    // Subida resiliente: Cloudinary si está configurado, o local como fallback seguro
+    const storeRes = await processAndStoreEvidence(base64Data, filename, req, "safety-evidencias");
+    const evidenceUrl = storeRes.url;
+    console.log(`[STORAGE UPLOAD SUCCESS] URL generada: ${evidenceUrl} (isCloudinary: ${storeRes.isCloudinary})`);
 
-    console.log(`[SAFETY UPLOAD] Recibida imagen ${uniqueName} (${buffer.length} bytes, ${(buffer.length / 1024 / 1024).toFixed(2)} MB), usuario: ${userEmail}`);
-    fs.writeFileSync(filePath, buffer);
-    const localUrl = `/uploads/${uniqueName}`;
-
-    // Subir obligatoriamente a Google Drive mediante Google Apps Script
+    // Respaldo secundario opcional y no bloqueante en Google Drive (si hay Apps Script configurado)
     const webhookUrl = getSafetyWebhookUrl();
-    if (!webhookUrl || !webhookUrl.startsWith("http")) {
-      return res.status(502).json({
-        success: false,
-        message: "No se puede subir a Google Drive: El Webhook de Google Apps Script no está configurado. Configure la URL en Conexión Google Sheets.",
-        localUrl
+    if (webhookUrl && webhookUrl.startsWith("http")) {
+      syncToGoogleAppsScript({
+        action: "upload_evidence",
+        filename: filename || `evidencia_${Date.now()}.jpg`,
+        base64Data,
+        mimeType: "image/jpeg",
+        userEmail,
+        cloudinaryUrl: evidenceUrl
+      }).catch((driveErr: any) => {
+        console.warn("[DRIVE BACKUP NOTICE] Falló respaldo opcional en Drive (no bloqueante):", driveErr?.message);
       });
     }
 
-    console.log(`[SAFETY UPLOAD] Enviando a Google Apps Script para guardar en carpeta Drive: ${uniqueName}...`);
-    const driveUploadRes = await syncToGoogleAppsScript({
-      action: "upload_evidence",
-      filename: uniqueName,
-      base64Data,
-      mimeType,
-      userEmail
-    });
-
-    if (!driveUploadRes.success) {
-      const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Error al subir a Google Drive";
-
-      if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
-        const hostedUrl = getHostedEvidenceUrl(req, uniqueName);
-        console.warn("[SAFETY UPLOAD FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace alojado en servidor:", hostedUrl);
-        return res.json({
-          success: true,
-          url: hostedUrl,
-          driveUrl: null,
-          localUrl,
-          filename: uniqueName,
-          isGoogleDrive: false,
-          requiresDriveAuth: true,
-          driveNotice: "Evidencia almacenada con éxito en el servidor. (Para almacenar directamente en Google Drive, ejecute la función 'autorizarPermisosDrive' en Apps Script).",
-          message: "Evidencia guardada en el servidor (Google Drive requiere autorizar permisos en Apps Script)."
-        });
-      }
-
-      console.error("[SAFETY UPLOAD DRIVE ERROR]:", errMsg);
-      return res.status(502).json({
-        success: false,
-        message: `No se pudo subir la evidencia a Google Drive: ${errMsg}. Intenta de nuevo.`,
-        errorDetails: errMsg,
-        localUrl
-      });
-    }
-
-    const driveUrl = driveUploadRes.result?.driveUrl || driveUploadRes.result?.url;
-    if (!driveUrl || (!driveUrl.includes("drive.google.com") && !driveUrl.includes("docs.google.com")) || driveUrl.includes("1AON_")) {
-      console.error("[SAFETY UPLOAD DRIVE ERROR] URL devuelta por Apps Script no es válida:", driveUploadRes.result);
-      return res.status(502).json({
-        success: false,
-        message: "Google Apps Script no devolvió un enlace confirmado de Google Drive.",
-        result: driveUploadRes.result,
-        localUrl
-      });
-    }
-
-    console.log(`[SAFETY UPLOAD DRIVE SUCCESS]: ${uniqueName} -> ${driveUrl}`);
+    // Respuesta con la URL definitiva (Cloudinary o Servidor)
     return res.json({
       success: true,
-      url: driveUrl,
-      driveUrl,
-      localUrl,
-      filename: uniqueName,
-      isGoogleDrive: true,
-      message: "Evidencia guardada y confirmada en la carpeta de Google Drive exitosamente."
+      url: evidenceUrl,
+      secure_url: evidenceUrl,
+      public_id: storeRes.public_id,
+      filename: storeRes.filename,
+      isCloudinary: storeRes.isCloudinary,
+      notice: storeRes.notice,
+      message: storeRes.isCloudinary
+        ? "Evidencia almacenada permanentemente en Cloudinary exitosamente."
+        : "Evidencia almacenada exitosamente en el servidor."
     });
   } catch (err: any) {
-    console.error("[SAFETY] Error uploading file:", err);
-    return res.status(500).json({ success: false, message: "Error al procesar la evidencia: " + err.message });
+    console.error("[STORAGE UPLOAD ERROR]:", err);
+    return res.status(500).json({
+      success: false,
+      message: `Error al procesar la evidencia: ${err.message || 'Error desconocido'}`
+    });
   }
 });
 
@@ -891,61 +1006,37 @@ app.post("/api/safety-novedades/close", async (req, res) => {
     });
   }
 
-  // Si se envió un archivo en base64 directamente, procesarlo y subir a Google Drive primero
+  // Si se envió un archivo en base64 directamente, procesarlo y guardarlo (Cloudinary o local)
   if (!finalEvidencia && fileBase64) {
     try {
-      const matches = fileBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      const mimeType = matches ? matches[1] : "image/jpeg";
-      const ext = filename ? path.extname(filename) || ".jpg" : ".jpg";
-      const cleanBaseName = (filename ? path.basename(filename, ext) : "evidencia_cierre").replace(/[^a-zA-Z0-9-_]/g, "_");
-      const uniqueName = `evidencia_cierre_${Date.now()}_${cleanBaseName}${ext}`;
-      const filePath = path.join(UPLOADS_DIR, uniqueName);
+      console.log(`[SAFETY CLOSE] Procesando evidencia de corrección (fila: ${fila})...`);
+      const storeRes = await processAndStoreEvidence(
+        fileBase64,
+        filename || `evidencia_cierre_fila${fila || 'sin_fila'}`,
+        req,
+        "safety-evidencias"
+      );
+      finalEvidencia = storeRes.url;
+      console.log(`[SAFETY CLOSE EVIDENCE SUCCESS]: ${finalEvidencia}`);
 
-      const buffer = matches ? Buffer.from(matches[2], "base64") : Buffer.from(fileBase64, "base64");
-      if (!buffer || buffer.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "El archivo de evidencia de corrección está vacío (0 bytes)."
-        });
+      // Respaldo secundario opcional y no bloqueante en Google Drive si Apps Script está configurado
+      const webhookUrl = getSafetyWebhookUrl();
+      if (webhookUrl && webhookUrl.startsWith("http")) {
+        syncToGoogleAppsScript({
+          action: "upload_evidence",
+          filename: filename || `cierre_fila${fila}_${Date.now()}.jpg`,
+          base64Data: fileBase64,
+          mimeType: "image/jpeg",
+          userEmail,
+          cloudinaryUrl: finalEvidencia
+        }).catch((e) => console.warn("[DRIVE BACKUP WARNING] Falló respaldo opcional en Drive:", e?.message));
       }
-      fs.writeFileSync(filePath, buffer);
-
-      console.log(`[SAFETY CLOSE] Subiendo evidencia a Google Drive vía Apps Script: ${uniqueName}...`);
-      const driveUploadRes = await syncToGoogleAppsScript({
-        action: "upload_evidence",
-        filename: uniqueName,
-        base64Data: fileBase64,
-        mimeType,
-        userEmail
-      });
-
-      if (!driveUploadRes.success) {
-        const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Fallo en subida a Google Drive";
-
-        if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
-          finalEvidencia = getHostedEvidenceUrl(req, uniqueName);
-          console.warn("[SAFETY CLOSE FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace del servidor:", finalEvidencia);
-        } else {
-          console.error("[SAFETY CLOSE DRIVE ERROR]:", errMsg);
-          return res.status(502).json({
-            success: false,
-            message: `No se pudo subir la evidencia de corrección a Google Drive: ${errMsg}. La novedad no fue cerrada. Intente de nuevo.`,
-            errorDetails: errMsg
-          });
-        }
-      } else {
-        const driveUrl = driveUploadRes.result?.driveUrl || driveUploadRes.result?.url;
-        if (!driveUrl || (!driveUrl.includes("drive.google.com") && !driveUrl.includes("docs.google.com")) || driveUrl.includes("1AON_")) {
-          console.warn("[SAFETY CLOSE DRIVE WARNING] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
-          finalEvidencia = getHostedEvidenceUrl(req, uniqueName);
-        } else {
-          finalEvidencia = driveUrl;
-        }
-      }
-
-      console.log(`[SAFETY CLOSE EVIDENCE CONFIRMED]: ${finalEvidencia}`);
     } catch (fErr: any) {
-      return res.status(500).json({ success: false, message: "Error al procesar el archivo de evidencia: " + fErr.message });
+      console.error("[SAFETY CLOSE EVIDENCE ERROR]:", fErr);
+      return res.status(500).json({
+        success: false,
+        message: "Error al guardar la evidencia de corrección: " + (fErr.message || "Error desconocido")
+      });
     }
   }
 
@@ -1119,63 +1210,36 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
     });
   }
 
-  // Si se envió un archivo en base64, subir primero a Google Drive obligatoriamente
+  // Si se envió un archivo en base64, procesarlo y guardarlo (Cloudinary o local)
   if (!finalDriveUrl && fileBase64) {
     try {
-      const matches = fileBase64.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-      const mimeType = matches ? matches[1] : "image/jpeg";
-      const ext = effectiveFilename ? path.extname(effectiveFilename) || ".jpg" : ".jpg";
-      const cleanBaseName = (effectiveFilename ? path.basename(effectiveFilename, ext) : `evidencia_${normalizedType}`).replace(/[^a-zA-Z0-9-_]/g, "_");
-      const uniqueName = `evidencia_${normalizedType}_fila${record.fila}_${Date.now()}_${cleanBaseName}${ext}`;
-      const filePath = path.join(UPLOADS_DIR, uniqueName);
+      console.log(`[SAFETY UPDATE EVIDENCE] Guardando evidencia para fila #${record.fila}...`);
+      const storeRes = await processAndStoreEvidence(
+        fileBase64,
+        effectiveFilename || `evidencia_${normalizedType}_fila${record.fila}`,
+        req,
+        "safety-evidencias"
+      );
+      finalDriveUrl = storeRes.url;
+      console.log(`[SAFETY UPDATE EVIDENCE SUCCESS]: ${finalDriveUrl}`);
 
-      const buffer = matches ? Buffer.from(matches[2], "base64") : Buffer.from(fileBase64, "base64");
-      if (!buffer || buffer.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "El archivo recibido está vacío (0 bytes)."
-        });
+      // Respaldo secundario opcional no bloqueante en Google Drive si Apps Script está activo
+      const webhookUrl = getSafetyWebhookUrl();
+      if (webhookUrl && webhookUrl.startsWith("http")) {
+        syncToGoogleAppsScript({
+          action: "upload_evidence",
+          filename: effectiveFilename || `evidencia_${record.fila}_${Date.now()}.jpg`,
+          base64Data: fileBase64,
+          mimeType: "image/jpeg",
+          userEmail: effectiveEmail,
+          cloudinaryUrl: finalDriveUrl
+        }).catch((e) => console.warn("[DRIVE BACKUP WARNING] Falló respaldo opcional en Drive:", e?.message));
       }
-      fs.writeFileSync(filePath, buffer);
-
-      console.log(`[SAFETY UPDATE EVIDENCE] Subiendo archivo a Google Drive vía Apps Script: ${uniqueName}...`);
-      const driveUploadRes = await syncToGoogleAppsScript({
-        action: "upload_evidence",
-        filename: uniqueName,
-        base64Data: fileBase64,
-        mimeType,
-        userEmail: effectiveEmail
-      });
-
-      if (!driveUploadRes.success) {
-        const errMsg = driveUploadRes.error || driveUploadRes.result?.message || "Fallo en subida a Google Drive";
-
-        if (isDrivePermissionError(errMsg) || driveUploadRes.result?.needsDriveAuth) {
-          finalDriveUrl = getHostedEvidenceUrl(req, uniqueName);
-          console.warn("[SAFETY UPDATE EVIDENCE FALLBACK] DriveApp requiere autorización en Apps Script. Usando enlace del servidor:", finalDriveUrl);
-        } else {
-          console.error("[SAFETY UPDATE EVIDENCE DRIVE ERROR]:", errMsg);
-          return res.status(502).json({
-            success: false,
-            message: `No se pudo subir la evidencia a Google Drive: ${errMsg}. La fila #${record.fila} no fue modificada. Intente de nuevo.`,
-            errorDetails: errMsg
-          });
-        }
-      } else {
-        const driveUrl = driveUploadRes.result?.driveUrl || driveUploadRes.result?.url;
-        if (!driveUrl || (!driveUrl.includes("drive.google.com") && !driveUrl.includes("docs.google.com")) || driveUrl.includes("1AON_")) {
-          console.warn("[SAFETY UPDATE EVIDENCE DRIVE WARNING] Apps Script no devolvió un enlace válido de Drive:", driveUploadRes.result);
-          finalDriveUrl = getHostedEvidenceUrl(req, uniqueName);
-        } else {
-          finalDriveUrl = driveUrl;
-        }
-      }
-
-      console.log(`[SAFETY UPDATE EVIDENCE CONFIRMED]: ${finalDriveUrl}`);
     } catch (fErr: any) {
+      console.error("[SAFETY UPDATE EVIDENCE ERROR]:", fErr);
       return res.status(500).json({
         success: false,
-        message: "Error al procesar y almacenar el archivo de evidencia: " + fErr.message
+        message: "Error al guardar evidencia: " + (fErr.message || "Error desconocido")
       });
     }
   }

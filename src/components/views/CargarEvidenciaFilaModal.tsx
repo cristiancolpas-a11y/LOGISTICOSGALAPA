@@ -91,7 +91,7 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
 
       onSuccess(
         updatedRecord,
-        data.message || `Collage de evidencia para la fila #${record.fila} (${record.placa}) guardado con éxito en Google Drive y Sheets.`
+        data.message || `Collage de evidencia para la fila #${record.fila} (${record.placa}) guardado con éxito en Cloudinary y Sheets.`
       );
     } catch (err: unknown) {
       if (err instanceof ApiError && err.status === 404) {
@@ -165,11 +165,11 @@ export const CargarEvidenciaFilaModal: React.FC<CargarEvidenciaFilaModalProps> =
           <div className="text-slate-400 leading-relaxed text-[11px]">
             {isReporte ? (
               <span>
-                Selecciona entre 1 y 4 fotos. Se generará un <strong>collage de alta fidelidad</strong> que se subirá a Google Drive y se vinculará en la columna <strong>EVIDENCIA DEL REPORTE</strong> (índice 3).
+                Selecciona entre 1 y 4 fotos. Se generará un <strong>collage de alta fidelidad</strong> que se subirá a Cloudinary y se vinculará en la columna <strong>EVIDENCIA DEL REPORTE</strong> (índice 3).
               </span>
             ) : (
               <span>
-                Selecciona entre 1 y 4 fotos. Se generará un <strong>collage de alta fidelidad</strong> que se subirá a Google Drive y se vinculará en la columna <strong>EVIDENCIA CORREGIDA</strong> (índice 4).
+                Selecciona entre 1 y 4 fotos. Se generará un <strong>collage de alta fidelidad</strong> que se subirá a Cloudinary y se vinculará en la columna <strong>EVIDENCIA CORREGIDA</strong> (índice 4).
               </span>
             )}
           </div>
