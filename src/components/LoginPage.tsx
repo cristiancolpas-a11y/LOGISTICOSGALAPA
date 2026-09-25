@@ -25,33 +25,29 @@ interface FallbackUser {
   role: string;
   company: string;
   permissions: string[];
-  passwords: string[];
 }
 
 const AUTHORIZED_USERS_LIST: FallbackUser[] = [
+  {
+    email: 'administraciongalapa@logisticos.co',
+    name: 'Administración AON Galapa',
+    role: 'Administrador General',
+    company: 'AON GALAPA / Logisticos.co',
+    permissions: ['admin', 'creator', 'full_access', 'module_config', 'view_all_kpis', 'view_all_data', 'manage_dashboard', 'manage_users', 'export_reports', 'system_settings']
+  },
   {
     email: 'cristian.colpas@logisticos.co',
     name: 'Cristian Colpas',
     role: 'Control Operativo de Flota',
     company: 'AON GALAPA / Logisticos.co',
-    permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports'],
-    passwords: ['12345678', 'Batman1506.', '1506', 'Galapa2026*']
+    permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports']
   },
   {
     email: 'leonardo.rodriguez@logisticos.co',
     name: 'Leonardo Rodríguez',
     role: 'Control Operativo de Flota',
     company: 'AON GALAPA / Logisticos.co',
-    permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports'],
-    passwords: ['12345678', '1718', '1506', 'Galapa2026*']
-  },
-  {
-    email: 'administraciongalapa@logisticos.co',
-    name: 'Administración AON Galapa',
-    role: 'Administrador General',
-    company: 'AON GALAPA / Logisticos.co',
-    permissions: ['admin', 'creator', 'full_access', 'module_config', 'view_all_kpis', 'view_all_data', 'manage_dashboard', 'manage_users', 'export_reports', 'system_settings'],
-    passwords: ['12345678', 'superman10.', '1506', 'Galapa2026*']
+    permissions: ['fleet_control', 'view_all_kpis', 'view_all_data', 'view_salida', 'view_retorno', 'view_alerts', 'export_reports']
   }
 ];
 
@@ -63,48 +59,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const authenticateLocally = (cleanEmail: string, cleanPassword: string): boolean => {
-    const matched = AUTHORIZED_USERS_LIST.find((u) => {
-      const userEmail = u.email.toLowerCase();
-      const userPrefix = userEmail.split('@')[0];
-      const isEmailOrUserMatch =
-        userEmail === cleanEmail ||
-        userPrefix === cleanEmail ||
-        (cleanEmail.includes('cristian') && userEmail.includes('cristian')) ||
-        (cleanEmail.includes('colpas') && userEmail.includes('cristian')) ||
-        (cleanEmail.includes('leonardo') && userEmail.includes('leonardo')) ||
-        (cleanEmail.includes('rodriguez') && userEmail.includes('leonardo')) ||
-        ((cleanEmail.includes('admin') || cleanEmail.includes('galapa')) && userEmail.includes('administracion'));
-
-      const isPasswordMatch =
-        u.passwords.includes(cleanPassword) ||
-        cleanPassword === '12345678' ||
-        cleanPassword === '12345678...' ||
-        cleanPassword === '1506' ||
-        cleanPassword === 'Galapa2026*' ||
-        cleanPassword === 'Batman1506.' ||
-        cleanPassword === 'superman10.' ||
-        cleanPassword === '1718';
-
-      return isEmailOrUserMatch && isPasswordMatch;
-    });
-
-    if (matched) {
-      const session: UserSession = {
-        id: matched.email,
-        email: matched.email,
-        name: matched.name,
-        role: matched.role,
-        company: matched.company,
-        permissions: matched.permissions,
-        authenticatedAt: new Date().toISOString()
-      };
-      onLoginSuccess(session);
-      return true;
-    }
-    return false;
-  };
-
   const executeLogin = async (targetEmail: string, targetPassword: string) => {
     setError(null);
     setIsLoading(true);
@@ -113,7 +67,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     const cleanPassword = targetPassword.trim();
 
     try {
-      // 1. Intentar autenticación con el servidor backend
+      // Autenticación segura contra el servidor backend
       const response = await safeFetchJson('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -132,18 +86,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
         }
       }
 
-      // Si el servidor rechazó con 401, verificar si cumple con el fallback local
-      const successLocal = authenticateLocally(cleanEmail, cleanPassword);
-      if (successLocal) return;
-
       const data = response.data || {};
       setError(data.message || 'Correo o contraseña incorrectos. Verifique sus credenciales de acceso.');
     } catch {
-      // 2. Fallback resiliente sin conexión / servidor reiniciando
-      const successLocal = authenticateLocally(cleanEmail, cleanPassword);
-      if (successLocal) return;
-
-      setError('Credenciales incorrectas. Verifique su usuario y contraseña corporativos.');
+      setError('Error de conexión con el servidor. Intente nuevamente en unos instantes.');
     } finally {
       setIsLoading(false);
     }

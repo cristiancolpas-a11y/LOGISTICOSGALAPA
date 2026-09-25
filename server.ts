@@ -1,14 +1,14 @@
 import express from "express";
 import path from "path";
 import https from "https";
-import fs from "fs";
-import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
-import { v2 as cloudinary } from "cloudinary";
+import { createClient, SupabaseClient } from "@supabase/supabase-js";
+import { GOOGLE_APPS_SCRIPT_CODE } from "./src/data/googleAppsScriptCode";
+import { FALLBACK_SAFETY_RECORDS } from "./src/data/fallbackSafetyData";
 
 dotenv.config();
 
-const app = express();
+export const app = express();
 const PORT = 3000;
 
 app.set("trust proxy", true);
@@ -16,360 +16,126 @@ app.set("trust proxy", true);
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-// ============================================================
-// CONFIGURACIÓN DE CLOUDINARY (ALMACENAMIENTO PERMANENTE)
-// ============================================================
-// NOTA IMPORTANTE PARA DESPLIEGUE EN VERCEL:
-// En Vercel el sistema de archivos es efímero y de solo lectura; todo archivo escrito
-// en disco desaparece al terminar la solicitud HTTP. Por eso las imágenes y collages
-// de evidencia técnica se suben y almacenan permanentemente en Cloudinary.
-//
-// Variables de entorno requeridas en Vercel (Panel -> Settings -> Environment Variables)
-// y en el archivo .env local:
-// 1. CLOUDINARY_CLOUD_NAME
-// 2. CLOUDINARY_API_KEY
-// 3. CLOUDINARY_API_SECRET
-//
-// Flujo:
-// Cliente (Base64) -> Servidor -> Cloudinary (uploader.upload) -> secure_url (HTTPS pública)
-// -> Se registra la secure_url en novedades_safety.json y en Google Sheets vía Apps Script.
-// ============================================================
+// Normalizador de rutas para Vercel Serverless:
+// Asegura que las solicitudes a /api/... mantengan el prefijo esperado en Vercel
+if (process.env.VERCEL) {
+  app.use((req, _res, next) => {
+    const matchedPath = (req.headers["x-matched-path"] as string) ||
+                        (req.headers["x-vercel-matched-path"] as string) ||
+                        (req.headers["x-forwarded-uri"] as string) ||
+                        (req.headers["x-original-uri"] as string);
 
-function cleanEnvVal(val: string | undefined): string {
-  if (!val) return "";
-  return val.trim().replace(/^["']|["']$/g, "").trim();
+    if (matchedPath && matchedPath.startsWith("/api") && req.url === "/api") {
+      req.url = matchedPath;
+    }
+    next();
+  });
 }
 
-export function getCloudinaryCredentials() {
-  const cloud_name = cleanEnvVal(process.env.CLOUDINARY_CLOUD_NAME);
-  const api_key = cleanEnvVal(process.env.CLOUDINARY_API_KEY);
-  const api_secret = cleanEnvVal(process.env.CLOUDINARY_API_SECRET);
-  const upload_preset = cleanEnvVal(process.env.CLOUDINARY_UPLOAD_PRESET);
 
-  // Validación: en ocasiones se introduce por error el mismo API Key en el campo API Secret
-  const isSecretSameAsKey = Boolean(api_key && api_secret && api_key === api_secret);
-  // Los API secrets de Cloudinary suelen tener ~27 caracteres alfanuméricos
-  const isSecretSuspiciouslyShort = Boolean(api_secret && api_secret.length < 20);
+// ============================================================
+// CONFIGURACIÓN DE SUPABASE (STORAGE + POSTGRES)
+// ============================================================
+// En Vercel Serverless, Supabase provee la capa de persistencia duradera:
+// 1. Supabase Storage -> Bucket 'evidencias' (público) para fotos de reportes y cierres.
+// 2. Supabase Postgres -> Tabla 'safety_novedades' para reportes y 'app_config' para configuración.
+//
+// Variables requeridas:
+// - SUPABASE_URL
+// - SUPABASE_SERVICE_ROLE_KEY (clave de servicio secreta, NUNCA expuesta al cliente)
+// ============================================================
 
-  const isValidSignedConfig = Boolean(
-    cloud_name &&
-    api_key &&
-    api_secret &&
-    !isSecretSameAsKey &&
-    !isSecretSuspiciouslyShort
-  );
+let supabaseClient: SupabaseClient | null = null;
 
-  const isValidUnsignedConfig = Boolean(cloud_name && upload_preset);
+export function getSupabase(): SupabaseClient | null {
+  const supabaseUrl = process.env.SUPABASE_URL?.trim();
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || process.env.SUPABASE_ANON_KEY?.trim();
 
-  let statusMessage = "No configurado";
-  let statusType: "ok" | "warning" | "not_configured" = "not_configured";
-
-  if (isValidSignedConfig) {
-    statusType = "ok";
-    statusMessage = `Cloudinary configurado correctamente (cloud: ${cloud_name}).`;
-  } else if (isSecretSameAsKey) {
-    statusType = "warning";
-    statusMessage = `Atención Cloudinary: CLOUDINARY_API_SECRET tiene el mismo valor que el API Key (${api_key}). El API Secret es una clave secreta alfanumérica de ~27 caracteres disponible en https://console.cloudinary.com en 'API Keys'. El servidor usará almacenamiento local transparente mientras se actualiza.`;
-  } else if (isSecretSuspiciouslyShort && api_secret) {
-    statusType = "warning";
-    statusMessage = `Atención Cloudinary: CLOUDINARY_API_SECRET parece incompleto (${api_secret.length} caracteres, usualmente son ~27).`;
-  } else if (isValidUnsignedConfig) {
-    statusType = "ok";
-    statusMessage = `Cloudinary configurado con preset sin firmar: ${upload_preset} (${cloud_name}).`;
+  if (!supabaseUrl || !supabaseKey) {
+    return null;
   }
 
-  return {
-    cloud_name,
-    api_key,
-    api_secret,
-    upload_preset,
-    isSecretSameAsKey,
-    isSecretSuspiciouslyShort,
-    isValidSignedConfig,
-    isValidUnsignedConfig,
-    isConfigured: isValidSignedConfig || isValidUnsignedConfig,
-    statusType,
-    statusMessage
-  };
+  if (!supabaseClient) {
+    supabaseClient = createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: false }
+    });
+  }
+  return supabaseClient;
 }
 
-export function isCloudinaryConfigured(): boolean {
-  const creds = getCloudinaryCredentials();
-  return creds.isConfigured;
+function parseBase64Image(base64Data: string): { buffer: Buffer; contentType: string; extension: string } {
+  let cleanBase64 = base64Data;
+  let contentType = "image/jpeg";
+  let extension = "jpg";
+
+  const matches = base64Data.match(/^data:([a-zA-Z0-9]+\/[a-zA-Z0-9-.+]+);base64,(.+)$/);
+  if (matches) {
+    contentType = matches[1];
+    cleanBase64 = matches[2];
+    if (contentType.includes("png")) extension = "png";
+    else if (contentType.includes("webp")) extension = "webp";
+    else if (contentType.includes("gif")) extension = "gif";
+  }
+
+  const buffer = Buffer.from(cleanBase64, "base64");
+  return { buffer, contentType, extension };
 }
 
-export interface CloudinaryUploadResult {
-  secure_url: string;
-  public_id: string;
-  format?: string;
-  bytes?: number;
-}
-
-/**
- * Sube una imagen en Base64 directamente a Cloudinary sin tocar el disco efímero.
- */
-export async function uploadToCloudinary(
+export async function uploadToSupabaseStorage(
   base64Data: string,
   filename?: string,
-  folder: string = "safety-evidencias"
-): Promise<CloudinaryUploadResult> {
-  const creds = getCloudinaryCredentials();
-  if (!creds.isConfigured) {
-    throw new Error(creds.statusMessage);
+  folder: string = "evidencias-safety"
+): Promise<{ url: string; path: string; filename: string }> {
+  const supabase = getSupabase();
+  if (!supabase) {
+    throw new Error(
+      "Almacenamiento permanente en Supabase no configurado. Configure SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en las variables de entorno de Vercel."
+    );
   }
 
-  // Asegurar formato Data URI
-  const formattedData = base64Data.startsWith("data:")
-    ? base64Data
-    : `data:image/jpeg;base64,${base64Data}`;
-
+  const { buffer, contentType, extension } = parseBase64Image(base64Data);
   const cleanBaseName = filename
     ? path.basename(filename, path.extname(filename)).replace(/[^a-zA-Z0-9-_]/g, "_")
-    : `evidencia_${Date.now()}`;
+    : "evidencia";
+  const filePath = `${folder}/${Date.now()}_${cleanBaseName}.${extension}`;
 
-  if (creds.isValidSignedConfig) {
-    cloudinary.config({
-      cloud_name: creds.cloud_name,
-      api_key: creds.api_key,
-      api_secret: creds.api_secret,
-      secure: true
+  const { data, error } = await supabase.storage
+    .from("evidencias")
+    .upload(filePath, buffer, {
+      contentType,
+      upsert: true
     });
 
-    const uploadResponse = await cloudinary.uploader.upload(formattedData, {
-      folder,
-      public_id: `${cleanBaseName}_${Date.now()}`,
-      resource_type: "image"
-    });
-
-    return {
-      secure_url: uploadResponse.secure_url,
-      public_id: uploadResponse.public_id,
-      format: uploadResponse.format,
-      bytes: uploadResponse.bytes
-    };
+  if (error) {
+    console.error("[SUPABASE STORAGE ERROR]:", error);
+    throw new Error(`Error al subir la imagen al bucket 'evidencias' de Supabase: ${error.message}`);
   }
 
-  // Unsigned upload fallback si se configuró un preset
-  const uploadResponse = await cloudinary.uploader.unsigned_upload(formattedData, creds.upload_preset, {
-    folder,
-    public_id: `${cleanBaseName}_${Date.now()}`,
-    resource_type: "image"
-  });
+  const { data: publicData } = supabase.storage
+    .from("evidencias")
+    .getPublicUrl(data?.path || filePath);
 
   return {
-    secure_url: uploadResponse.secure_url,
-    public_id: uploadResponse.public_id,
-    format: uploadResponse.format,
-    bytes: uploadResponse.bytes
+    url: publicData.publicUrl,
+    path: data?.path || filePath,
+    filename: path.basename(filePath)
   };
 }
 
-// Directorio de uploads local como respaldo/fallback para desarrollo y entornos donde Cloudinary aún no está configurado
-const UPLOADS_DIR = path.join(process.cwd(), "data", "uploads");
-if (!fs.existsSync(UPLOADS_DIR)) {
-  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-}
-
-export function getHostedEvidenceUrl(req: express.Request | undefined, filename: string): string {
-  if (req) {
-    const rawHost = req.get("x-forwarded-host") || req.get("host") || "localhost:3000";
-    const host = rawHost.split(",")[0].trim();
-    const isLocalhost = host.includes("localhost") || host.includes("127.0.0.1");
-    const rawProto = req.get("x-forwarded-proto") || req.protocol;
-    const proto = isLocalhost ? (rawProto || "http") : "https";
-    return `${proto}://${host}/uploads/${filename}`;
-  }
-  return `/uploads/${filename}`;
-}
-
-/**
- * Guarda o sube la evidencia técnica de forma resiliente:
- * 1. Si Cloudinary está configurado válidamente, la sube a Cloudinary y retorna la URL segura HTTPS.
- * 2. Si Cloudinary no está configurado o sus credenciales están incompletas/en corrección, guarda el archivo
- *    en el servidor local (/uploads/...) como fallback transparente para que la aplicación nunca falle.
- */
 export async function processAndStoreEvidence(
   base64Data: string,
   filename: string | undefined,
-  req?: express.Request,
-  folder: string = "safety-evidencias"
-): Promise<{ url: string; isCloudinary: boolean; public_id?: string; filename: string; notice?: string }> {
-  const creds = getCloudinaryCredentials();
-
-  // 1. Intentar Cloudinary si la configuración es válida
-  if (creds.isConfigured) {
-    try {
-      console.log(`[STORAGE] Subiendo a Cloudinary permanente (${folder})...`);
-      const cloudRes = await uploadToCloudinary(base64Data, filename, folder);
-      console.log(`[STORAGE CLOUDINARY OK] ${cloudRes.secure_url}`);
-      return {
-        url: cloudRes.secure_url,
-        isCloudinary: true,
-        public_id: cloudRes.public_id,
-        filename: filename || cloudRes.public_id
-      };
-    } catch (cloudErr: any) {
-      console.info(`[STORAGE NOTICE] Cloudinary: ${cloudErr?.message || cloudErr}. Continuando con almacenamiento en servidor local.`);
-    }
-  } else if (creds.statusType === "warning") {
-    console.info(`[STORAGE CONFIG NOTICE] ${creds.statusMessage}`);
-  }
-
-  // 2. Almacenamiento local en servidor (fallback resiliente)
-  const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-  const ext = filename ? path.extname(filename) || ".jpg" : ".jpg";
-  const cleanBaseName = (filename ? path.basename(filename, ext) : "evidencia").replace(/[^a-zA-Z0-9-_]/g, "_");
-  const uniqueName = `evidencia_${Date.now()}_${cleanBaseName}${ext}`;
-  const filePath = path.join(UPLOADS_DIR, uniqueName);
-
-  const buffer = matches ? Buffer.from(matches[2], "base64") : Buffer.from(base64Data, "base64");
-  if (!buffer || buffer.length === 0) {
-    throw new Error("El archivo de evidencia recibido está vacío (0 bytes).");
-  }
-
-  fs.writeFileSync(filePath, buffer);
-  const hostedUrl = getHostedEvidenceUrl(req, uniqueName);
-  console.log(`[STORAGE LOCAL OK] Guardado en servidor: ${hostedUrl} (${buffer.length} bytes)`);
-
+  _req?: express.Request,
+  folder: string = "evidencias-safety"
+): Promise<{ url: string; isSupabase: boolean; path?: string; filename: string }> {
+  const uploadRes = await uploadToSupabaseStorage(base64Data, filename, folder);
   return {
-    url: hostedUrl,
-    isCloudinary: false,
-    filename: uniqueName,
-    notice: creds.statusType === "warning"
-      ? creds.statusMessage
-      : "Almacenado en servidor local (respaldo de alta disponibilidad)."
+    url: uploadRes.url,
+    isSupabase: true,
+    path: uploadRes.path,
+    filename: uploadRes.filename
   };
 }
-
-// Ruta para servir archivos de evidencia locales con fallback visual de alta fidelidad
-app.get("/uploads/:filename", (req, res) => {
-  const filename = req.params.filename;
-  const filePath = path.join(UPLOADS_DIR, filename);
-  if (fs.existsSync(filePath)) {
-    const fileBuffer = fs.readFileSync(filePath);
-    const headerPrefix = fileBuffer.slice(0, 100).toString("utf-8").trim().toLowerCase();
-    if (headerPrefix.startsWith("<svg") || headerPrefix.startsWith("<?xml")) {
-      res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");
-      res.setHeader("Cache-Control", "public, max-age=3600");
-      return res.send(fileBuffer);
-    }
-    const ext = path.extname(filename).toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".png": "image/png",
-      ".webp": "image/webp",
-      ".svg": "image/svg+xml"
-    };
-    res.setHeader("Content-Type", mimeTypes[ext] || "image/jpeg");
-    res.setHeader("Cache-Control", "public, max-age=86400");
-    return res.sendFile(filePath);
-  }
-
-  // Generar evidencia visual técnica como fallback si el archivo no existe en el contenedor efímero
-  const filaMatch = filename.match(/fila(\d+)/i);
-  const filaNum = filaMatch ? filaMatch[1] : "N/A";
-  const isReporte = filename.toLowerCase().includes("reporte");
-
-  let placa = "VEHÍCULO AON";
-  let novedadDesc = "Inspección Técnica Safety";
-  try {
-    const records = loadSafetyRecords();
-    const found = records.find((r) => String(r.fila) === String(filaNum));
-    if (found) {
-      placa = found.placa;
-      novedadDesc = found.novedad || found.categoria;
-    }
-  } catch (e) {
-    // Silencioso
-  }
-
-  const svg = `
-<svg width="1200" height="900" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, sans-serif">
-  <defs>
-    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f172a"/>
-      <stop offset="100%" stop-color="#1e293b"/>
-    </linearGradient>
-    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1e293b"/>
-      <stop offset="100%" stop-color="#0f172a"/>
-    </linearGradient>
-    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000" flood-opacity="0.5"/>
-    </filter>
-  </defs>
-  <rect width="100%" height="100%" fill="url(#bg)"/>
-
-  <!-- Encabezado Superior -->
-  <rect x="30" y="25" width="1140" height="90" rx="16" fill="#1e293b" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
-  <rect x="50" y="42" width="6" height="56" rx="3" fill="${isReporte ? '#3b82f6' : '#10b981'}"/>
-  <text x="70" y="62" fill="#94a3b8" font-size="13" font-weight="600" letter-spacing="1">SISTEMA INTEGRAL SAFETY - AON GALAPA</text>
-  <text x="70" y="92" fill="#ffffff" font-size="22" font-weight="bold">${isReporte ? 'EVIDENCIA DE INSPECCIÓN Y REPORTE' : 'EVIDENCIA DE CORRECCIÓN REALIZADA'}</text>
-  
-  <rect x="880" y="45" width="130" height="48" rx="10" fill="#0f172a" stroke="#475569" stroke-width="1"/>
-  <text x="945" y="75" fill="#38bdf8" font-size="18" font-weight="bold" font-family="monospace" text-anchor="middle">${placa}</text>
-  <rect x="1025" y="45" width="125" height="48" rx="10" fill="#0f172a" stroke="#475569" stroke-width="1"/>
-  <text x="1087" y="75" fill="#cbd5e1" font-size="14" font-weight="bold" text-anchor="middle">FILA #${filaNum}</text>
-
-  <!-- Cuadrícula Collage 4 Fotos de Evidencia -->
-  <!-- Foto 1 -->
-  <rect x="30" y="135" width="555" height="340" rx="16" fill="url(#cardGrad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
-  <rect x="30" y="135" width="555" height="40" rx="16" fill="#0f172a" opacity="0.6"/>
-  <text x="50" y="160" fill="#38bdf8" font-size="13" font-weight="bold">PANORÁMICA GENERAL - ÁNGULO LATERAL IZQUIERDO</text>
-  <circle cx="307" cy="305" r="90" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="6,6" opacity="0.4"/>
-  <rect x="180" y="240" width="255" height="120" rx="12" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-  <text x="307" y="295" fill="#f8fafc" font-size="15" font-weight="bold" text-anchor="middle">REGISTRO FOTOGRÁFICO 1</text>
-  <text x="307" y="320" fill="#94a3b8" font-size="12" text-anchor="middle">${novedadDesc.slice(0, 45)}</text>
-  <text x="50" y="455" fill="#64748b" font-size="11" font-family="monospace">COORD: 10.8992° N, 74.8872° W • TIMESTAMP: INSPECCIÓN CERTIFICADA</text>
-
-  <!-- Foto 2 -->
-  <rect x="615" y="135" width="555" height="340" rx="16" fill="url(#cardGrad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
-  <rect x="615" y="135" width="555" height="40" rx="16" fill="#0f172a" opacity="0.6"/>
-  <text x="635" y="160" fill="#38bdf8" font-size="13" font-weight="bold">DETALLE DE NOVEDAD - ÁREA DE IMPACTO DIRECTA</text>
-  <circle cx="892" cy="305" r="90" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6,6" opacity="0.4"/>
-  <rect x="765" y="240" width="255" height="120" rx="12" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-  <text x="892" y="295" fill="#f8fafc" font-size="15" font-weight="bold" text-anchor="middle">REGISTRO FOTOGRÁFICO 2</text>
-  <text x="892" y="320" fill="#f59e0b" font-size="12" text-anchor="middle">VERIFICACIÓN CRÍTICA EN PISO</text>
-  <text x="635" y="455" fill="#64748b" font-size="11" font-family="monospace">ESTADO: INSPECCIONADO • PATIO GALAPA</text>
-
-  <!-- Foto 3 -->
-  <rect x="30" y="495" width="555" height="340" rx="16" fill="url(#cardGrad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
-  <rect x="30" y="495" width="555" height="40" rx="16" fill="#0f172a" opacity="0.6"/>
-  <text x="50" y="520" fill="#38bdf8" font-size="13" font-weight="bold">ÁNGULO POSTERIOR Y CHASÍS</text>
-  <circle cx="307" cy="665" r="90" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="6,6" opacity="0.4"/>
-  <rect x="180" y="600" width="255" height="120" rx="12" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-  <text x="307" y="655" fill="#f8fafc" font-size="15" font-weight="bold" text-anchor="middle">REGISTRO FOTOGRÁFICO 3</text>
-  <text x="307" y="680" fill="#94a3b8" font-size="12" text-anchor="middle">SECTOR DE RODAMIENTO Y ACCESO</text>
-  <text x="50" y="815" fill="#64748b" font-size="11" font-family="monospace">CONTROL CALIDAD OPERACIONAL LOGÍSTICA</text>
-
-  <!-- Foto 4 -->
-  <rect x="615" y="495" width="555" height="340" rx="16" fill="url(#cardGrad)" stroke="#334155" stroke-width="1.5" filter="url(#shadow)"/>
-  <rect x="615" y="495" width="555" height="40" rx="16" fill="#0f172a" opacity="0.6"/>
-  <text x="635" y="520" fill="#38bdf8" font-size="13" font-weight="bold">CONFORMIDAD TÉCNICA Y MARCADOR</text>
-  <circle cx="892" cy="665" r="90" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="6,6" opacity="0.4"/>
-  <rect x="765" y="600" width="255" height="120" rx="12" fill="#1e293b" stroke="#475569" stroke-width="2"/>
-  <text x="892" y="655" fill="#f8fafc" font-size="15" font-weight="bold" text-anchor="middle">REGISTRO FOTOGRÁFICO 4</text>
-  <text x="892" y="680" fill="#10b981" font-size="12" text-anchor="middle">CERTIFICACIÓN SAFETY VIAL</text>
-  <text x="635" y="815" fill="#64748b" font-size="11" font-family="monospace">USUARIO: safety@logisticos.co • SELLO DIGITAL</text>
-
-  <!-- Barra Inferior de Firma -->
-  <rect x="30" y="850" width="1140" height="35" rx="8" fill="#0b1120"/>
-  <text x="50" y="873" fill="#64748b" font-size="11">COLLAGE 4 FOTOS • OPERACIÓN AON GALAPA • EVIDENCIA TÉCNICA OFICIAL</text>
-  <text x="1150" y="873" fill="#38bdf8" font-size="11" text-anchor="end" font-family="monospace">ID: ${filename.slice(0, 32)}</text>
-</svg>
-  `.trim();
-
-  try {
-    fs.writeFileSync(filePath, svg);
-  } catch (e) {
-    // Silencioso
-  }
-
-  res.setHeader("Content-Type", "image/svg+xml");
-  res.setHeader("Cache-Control", "public, max-age=3600");
-  res.send(svg);
-});
 
 
 const DEFAULT_SHEET_ID = "18-2Tnc_Or8AVn8wqu-00hqMRPdq9hH3AORjuQ9P6Hsk";
@@ -381,144 +147,116 @@ const sheetCache = new Map<string, { raw: string; fetchedAt: string; timestamp: 
 const CACHE_TTL_MS = 30 * 1000; // 30 seconds
 
 // ============================================================
-// USUARIOS: se cargan desde variables de entorno (.env) o defaults autorizados
-// Formato de cada variable en .env:
-//   USER_1='{"email":"...","password":"...","name":"...","role":"...","company":"...","permissions":["..."]}'
-//   o simplemente una clave en texto plano (ej. USER_1='superman10.', USER_2='Batman1506.', USER_3='1718')
+// USUARIOS: se configuran mediante variables de entorno (USER_1..3)
+// Formato recomendado en .env o Vercel:
+//   USER_1='{"email":"administraciongalapa@logisticos.co","password":"tu_password_seguro","name":"Administración AON Galapa","role":"Administrador General"}'
+//   o simplemente una clave en texto plano en la variable de entorno: USER_1='tu_password_seguro'
 // ============================================================
 interface AppUser {
   email: string;
-  passwords: string[];
   name: string;
   role: string;
   company: string;
   permissions: string[];
+  password?: string;
 }
 
 const DEFAULT_AUTHORIZED_USERS: AppUser[] = [
   {
-    email: "cristian.colpas@logisticos.co",
-    passwords: ["12345678", "12345678...", "Batman1506.", "1506", "Galapa2026*"],
-    name: "Cristian Colpas",
-    role: "Control Operativo de Flota",
-    company: "AON GALAPA / Logisticos.co",
-    permissions: ["fleet_control", "view_all_kpis", "view_all_data", "view_salida", "view_retorno", "view_alerts", "export_reports"]
-  },
-  {
-    email: "leonardo.rodriguez@logisticos.co",
-    passwords: ["12345678", "12345678...", "1718", "1506", "Galapa2026*"],
-    name: "Leonardo Rodríguez",
-    role: "Control Operativo de Flota",
-    company: "AON GALAPA / Logisticos.co",
-    permissions: ["fleet_control", "view_all_kpis", "view_all_data", "view_salida", "view_retorno", "view_alerts", "export_reports"]
-  },
-  {
     email: "administraciongalapa@logisticos.co",
-    passwords: ["12345678", "12345678...", "superman10.", "1506", "Galapa2026*"],
     name: "Administración AON Galapa",
     role: "Administrador General",
     company: "AON GALAPA / Logisticos.co",
-    permissions: ["admin", "creator", "full_access", "module_config", "view_all_kpis", "view_all_data", "manage_dashboard", "manage_users", "export_reports", "system_settings"]
+    permissions: [
+      "admin",
+      "creator",
+      "full_access",
+      "module_config",
+      "view_all_kpis",
+      "view_all_data",
+      "manage_dashboard",
+      "manage_users",
+      "export_reports",
+      "system_settings"
+    ]
+  },
+  {
+    email: "cristian.colpas@logisticos.co",
+    name: "Cristian Colpas",
+    role: "Control Operativo de Flota",
+    company: "AON GALAPA / Logisticos.co",
+    permissions: [
+      "fleet_control",
+      "view_all_kpis",
+      "view_all_data",
+      "view_salida",
+      "view_retorno",
+      "view_alerts",
+      "export_reports"
+    ]
+  },
+  {
+    email: "leonardo.rodriguez@logisticos.co",
+    name: "Leonardo Rodríguez",
+    role: "Control Operativo de Flota",
+    company: "AON GALAPA / Logisticos.co",
+    permissions: [
+      "fleet_control",
+      "view_all_kpis",
+      "view_all_data",
+      "view_salida",
+      "view_retorno",
+      "view_alerts",
+      "export_reports"
+    ]
   }
 ];
 
 function loadUsersFromEnv(): AppUser[] {
-  // Base users clonados
-  const users: AppUser[] = DEFAULT_AUTHORIZED_USERS.map((u) => ({
-    ...u,
-    passwords: [...u.passwords]
-  }));
+  const users: AppUser[] = DEFAULT_AUTHORIZED_USERS.map((u) => ({ ...u }));
 
-  // Extraer valores crudos de USER_1, USER_2, USER_3
-  const envUser1 = process.env.USER_1?.trim();
-  const envUser2 = process.env.USER_2?.trim();
-  const envUser3 = process.env.USER_3?.trim();
+  const envDefinitions = [
+    { envVal: process.env.USER_1?.trim(), defaultEmail: "administraciongalapa@logisticos.co" },
+    { envVal: process.env.USER_2?.trim(), defaultEmail: "cristian.colpas@logisticos.co" },
+    { envVal: process.env.USER_3?.trim(), defaultEmail: "leonardo.rodriguez@logisticos.co" }
+  ];
 
-  // Si USER_1, USER_2 o USER_3 son texto plano (ej. 'superman10.', 'Batman1506.', '1718'), agregarlos a las contraseñas válidas
-  if (envUser1) {
+  for (const item of envDefinitions) {
+    if (!item.envVal) continue;
     try {
-      if (envUser1.startsWith("{")) {
-        const parsed = JSON.parse(envUser1);
-        if (parsed.email && parsed.password) {
-          const existing = users.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
+      if (item.envVal.startsWith("{")) {
+        const parsed = JSON.parse(item.envVal);
+        if (parsed.email) {
+          const existing = users.find((u) => u.email.toLowerCase() === parsed.email.toLowerCase());
           if (existing) {
-            existing.passwords.unshift(String(parsed.password).trim());
+            if (parsed.password) existing.password = String(parsed.password).trim();
+            if (parsed.name) existing.name = parsed.name;
+            if (parsed.role) existing.role = parsed.role;
+            if (parsed.permissions) existing.permissions = parsed.permissions;
           } else {
-            users.push({ ...parsed, passwords: [String(parsed.password).trim()] });
+            users.push({
+              email: parsed.email.toLowerCase(),
+              name: parsed.name || parsed.email,
+              role: parsed.role || "Operativo",
+              company: parsed.company || "AON GALAPA / Logisticos.co",
+              permissions: parsed.permissions || ["view_all_data"],
+              password: parsed.password ? String(parsed.password).trim() : undefined
+            });
           }
         }
       } else {
-        // Asignar al admin (USER_1 en .env.example)
-        const adminUser = users.find(u => u.email.includes("administracion"));
-        if (adminUser && !adminUser.passwords.includes(envUser1)) {
-          adminUser.passwords.unshift(envUser1);
+        const matched = users.find((u) => u.email === item.defaultEmail);
+        if (matched) {
+          matched.password = item.envVal;
         }
       }
     } catch (e) {
-      console.error("[AON GALAPA] Error procesando USER_1", e);
+      console.error("[AON GALAPA] Error procesando variable de usuario:", e);
     }
-  }
-
-  if (envUser2) {
-    try {
-      if (envUser2.startsWith("{")) {
-        const parsed = JSON.parse(envUser2);
-        if (parsed.email && parsed.password) {
-          const existing = users.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
-          if (existing) {
-            existing.passwords.unshift(String(parsed.password).trim());
-          } else {
-            users.push({ ...parsed, passwords: [String(parsed.password).trim()] });
-          }
-        }
-      } else {
-        // Asignar a Cristian Colpas (USER_2 en .env.example)
-        const cristianUser = users.find(u => u.email.includes("cristian"));
-        if (cristianUser && !cristianUser.passwords.includes(envUser2)) {
-          cristianUser.passwords.unshift(envUser2);
-        }
-      }
-    } catch (e) {
-      console.error("[AON GALAPA] Error procesando USER_2", e);
-    }
-  }
-
-  if (envUser3) {
-    try {
-      if (envUser3.startsWith("{")) {
-        const parsed = JSON.parse(envUser3);
-        if (parsed.email && parsed.password) {
-          const existing = users.find(u => u.email.toLowerCase() === parsed.email.toLowerCase());
-          if (existing) {
-            existing.passwords.unshift(String(parsed.password).trim());
-          } else {
-            users.push({ ...parsed, passwords: [String(parsed.password).trim()] });
-          }
-        }
-      } else {
-        // Asignar a Leonardo Rodríguez (USER_3 en .env.example)
-        const leonardoUser = users.find(u => u.email.includes("leonardo"));
-        if (leonardoUser && !leonardoUser.passwords.includes(envUser3)) {
-          leonardoUser.passwords.unshift(envUser3);
-        }
-      }
-    } catch (e) {
-      console.error("[AON GALAPA] Error procesando USER_3", e);
-    }
-  }
-
-  // Garantizar que "12345678" y "12345678..." estén en TODOS los usuarios
-  for (const user of users) {
-    if (!user.passwords.includes("12345678")) user.passwords.unshift("12345678");
-    if (!user.passwords.includes("12345678...")) user.passwords.push("12345678...");
   }
 
   return users;
 }
-
-const APP_USERS = loadUsersFromEnv();
-
-console.log(`[AON GALAPA] ${APP_USERS.length} usuario(s) cargado(s) para autenticación.`);
 
 function fetchSheetCsv(sheetName: string = "Check list"): Promise<string> {
   const targetUrl = `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}`;
@@ -542,13 +280,18 @@ function fetchSheetCsv(sheetName: string = "Check list"): Promise<string> {
   });
 }
 
-// API Routes
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok", service: "AON GALAPA - Dashboard Inteligente" });
+// API Routes & Health Check (compatible con /api, /api/health y /health en Vercel)
+app.get(["/api", "/api/health", "/health"], (_req, res) => {
+  res.json({
+    status: "ok",
+    service: "AON GALAPA - Dashboard Inteligente",
+    serverless: Boolean(process.env.VERCEL),
+    timestamp: new Date().toISOString()
+  });
 });
 
-// Authentication endpoint
-app.post("/api/auth/login", (req, res) => {
+// Authentication endpoint - Valida credenciales contra variables de entorno USER_1..3
+app.post(["/api/auth/login", "/auth/login"], (req, res) => {
   const { email, password } = req.body || {};
 
   if (!email || !password) {
@@ -558,8 +301,9 @@ app.post("/api/auth/login", (req, res) => {
   const normalizedInput = String(email).trim().toLowerCase();
   const trimmedPassword = String(password).trim();
 
-  // Find matching user by email, prefix before @, or name
-  const match = APP_USERS.find((u) => {
+  const currentUsers = loadUsersFromEnv();
+
+  const match = currentUsers.find((u) => {
     const userEmail = u.email.toLowerCase();
     const userPrefix = userEmail.split("@")[0];
     const isEmailOrUserMatch =
@@ -569,52 +313,48 @@ app.post("/api/auth/login", (req, res) => {
       (normalizedInput.includes("leonardo") && userEmail.includes("leonardo")) ||
       ((normalizedInput.includes("admin") || normalizedInput.includes("galapa")) && userEmail.includes("administracion"));
 
-    const isPasswordMatch =
-      u.passwords.includes(trimmedPassword) ||
-      trimmedPassword === "12345678" ||
-      trimmedPassword === "12345678..." ||
-      trimmedPassword === "1506" ||
-      trimmedPassword === "Galapa2026*" ||
-      (process.env.USER_1 && trimmedPassword === process.env.USER_1.trim()) ||
-      (process.env.USER_2 && trimmedPassword === process.env.USER_2.trim()) ||
-      (process.env.USER_3 && trimmedPassword === process.env.USER_3.trim());
+    if (!isEmailOrUserMatch) return false;
 
-    return isEmailOrUserMatch && isPasswordMatch;
+    // Validación segura de contraseña provista en USER_1..3
+    if (u.password) {
+      return u.password === trimmedPassword;
+    }
+
+    return false;
   });
 
   if (match) {
-    // No devolvemos las contraseñas al cliente
-    const { passwords: _omit, ...safeUser } = match;
+    const { password: _omit, ...safeUser } = match;
     return res.json({
       success: true,
       user: {
         id: safeUser.email,
-        ...safeUser,
-      },
+        ...safeUser
+      }
     });
   }
 
   return res.status(401).json({
     success: false,
-    message: "Credenciales incorrectas. Verifique su usuario y contraseña (clave universal: 12345678).",
+    message: "Credenciales incorrectas. Verifique su usuario y contraseña corporativos configurados en el sistema."
   });
 });
 
-// Endpoint informativo de credenciales y claves activas
-app.get("/api/auth/credentials-info", (_req, res) => {
+// Endpoint informativo de usuarios activos (sin exponer contraseñas)
+app.get(["/api/auth/credentials-info", "/auth/credentials-info"], (_req, res) => {
+  const currentUsers = loadUsersFromEnv();
   res.json({
-    universalPassword: "12345678",
-    users: APP_USERS.map((u) => ({
+    users: currentUsers.map((u) => ({
       name: u.name,
       email: u.email,
       role: u.role,
-      activePasswords: u.passwords
+      company: u.company
     }))
   });
 });
 
 // Generic Google Sheets Proxy Endpoint
-app.get(["/api/check-list-data", "/api/sheet-data"], async (req, res) => {
+app.get(["/api/check-list-data", "/api/sheet-data", "/check-list-data", "/sheet-data"], async (req, res) => {
   const sheetName = String(req.query.sheet || "Check list").trim();
   const forceRefresh = req.query.refresh === "true";
   const now = Date.now();
@@ -666,8 +406,8 @@ app.get(["/api/check-list-data", "/api/sheet-data"], async (req, res) => {
 
 // =========================================================================
 // MÓDULO: NOVEDADES REPORTADAS SAFETY-FLOTA ("NOVEDADES-SAFETY")
+// ALMACENAMIENTO SERVERLESS: Memoria + Google Sheets (Apps Script) + KV
 // =========================================================================
-const SAFETY_DATA_FILE = path.join(process.cwd(), "data", "novedades_safety.json");
 
 // Official fleet plates (normalized)
 const OFFICIAL_FLEET_PLATES = new Set([
@@ -704,57 +444,181 @@ interface SafetyNovedadItem {
   cerradoFecha?: string;
 }
 
-function loadSafetyRecords(): SafetyNovedadItem[] {
+// In-memory safety records (inicializados con FALLBACK_SAFETY_RECORDS)
+let inMemorySafetyRecords: SafetyNovedadItem[] = [...(FALLBACK_SAFETY_RECORDS as SafetyNovedadItem[])];
+
+// ============================================================
+// PERSISTENCIA EN SUPABASE POSTGRES (TABLA 'safety_novedades' Y 'app_config')
+// ============================================================
+
+function mapDbRowToSafetyItem(row: any): SafetyNovedadItem {
+  return {
+    id: String(row.id),
+    fila: Number(row.fila),
+    categoria: row.categoria || "CARROCERIA",
+    placa: row.placa || "",
+    novedad: row.novedad || "",
+    evidenciaReporte: row.evidenciaReporte ?? row.evidencia_reporte ?? "",
+    evidenciaCorregida: row.evidenciaCorregida ?? row.evidencia_corregida ?? "",
+    estado: row.estado === "REALIZADO" ? "REALIZADO" : "PENDIENTE",
+    reportadoPor: row.reportadoPor ?? row.reportado_por,
+    reportadoFecha: row.reportadoFecha ?? row.reportado_fecha,
+    cerradoPor: row.cerradoPor ?? row.cerrado_por,
+    cerradoFecha: row.cerradoFecha ?? row.cerrado_fecha
+  };
+}
+
+function mapSafetyItemToDbRow(item: SafetyNovedadItem): any {
+  return {
+    id: item.id,
+    fila: item.fila,
+    categoria: item.categoria,
+    placa: item.placa,
+    novedad: item.novedad,
+    evidenciaReporte: item.evidenciaReporte || "",
+    evidenciaCorregida: item.evidenciaCorregida || "",
+    estado: item.estado,
+    reportadoPor: item.reportadoPor || null,
+    reportadoFecha: item.reportadoFecha || null,
+    cerradoPor: item.cerradoPor || null,
+    cerradoFecha: item.cerradoFecha || null
+  };
+}
+
+// Persistencia y lectura desde Supabase Postgres (Serverless-compliant)
+async function loadSafetyRecords(): Promise<SafetyNovedadItem[]> {
+  const supabase = getSupabase();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from("safety_novedades")
+        .select("*")
+        .order("fila", { ascending: true });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        inMemorySafetyRecords = data.map(mapDbRowToSafetyItem);
+        return inMemorySafetyRecords;
+      } else if (error) {
+        console.warn("[SUPABASE LOAD WARNING]:", error.message);
+      }
+    } catch (err: any) {
+      console.warn("[SUPABASE LOAD EXCEPTION]:", err?.message);
+    }
+  }
+
+  // Fallback a sincronización en vivo con Google Sheets vía Apps Script si está disponible
+  const webhookUrl = getSafetyWebhookUrl();
+  if (webhookUrl && webhookUrl.startsWith("http") && !webhookUrl.includes("/dev")) {
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ action: "get_records" })
+      });
+      const data = await res.json();
+      if (data && data.success && Array.isArray(data.records) && data.records.length > 0) {
+        inMemorySafetyRecords = data.records;
+        // Respaldo automático en Supabase si está conectado
+        if (supabase) {
+          saveSafetyRecords(data.records);
+        }
+        return inMemorySafetyRecords;
+      }
+    } catch {
+      // Usar registros en memoria si la consulta en red no responde inmediatamente
+    }
+  }
+
+  return inMemorySafetyRecords;
+}
+
+async function saveSafetyRecordsToSupabase(records: SafetyNovedadItem[]): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
   try {
-    if (fs.existsSync(SAFETY_DATA_FILE)) {
-      const data = fs.readFileSync(SAFETY_DATA_FILE, "utf-8");
-      return JSON.parse(data);
+    const rows = records.map(mapSafetyItemToDbRow);
+    const { error } = await supabase.from("safety_novedades").upsert(rows, { onConflict: "id" });
+    if (error) {
+      // En caso de que la tabla en postgres se haya creado con columnas en snake_case
+      const snakeRows = records.map((r) => ({
+        id: r.id,
+        fila: r.fila,
+        categoria: r.categoria,
+        placa: r.placa,
+        novedad: r.novedad,
+        evidencia_reporte: r.evidenciaReporte || "",
+        evidencia_corregida: r.evidenciaCorregida || "",
+        estado: r.estado,
+        reportado_por: r.reportadoPor || null,
+        reportado_fecha: r.reportadoFecha || null,
+        cerrado_por: r.cerradoPor || null,
+        cerrado_fecha: r.cerradoFecha || null
+      }));
+      await supabase.from("safety_novedades").upsert(snakeRows, { onConflict: "id" });
     }
   } catch (err) {
-    console.error("[SAFETY] Error reading safety records:", err);
+    console.warn("[SUPABASE UPSERT EXCEPTION]:", err);
   }
-  return [];
 }
 
 function saveSafetyRecords(records: SafetyNovedadItem[]) {
-  try {
-    const dir = path.dirname(SAFETY_DATA_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SAFETY_DATA_FILE, JSON.stringify(records, null, 2), "utf-8");
-  } catch (err) {
-    console.error("[SAFETY] Error saving safety records:", err);
-  }
+  inMemorySafetyRecords = [...records];
+  saveSafetyRecordsToSupabase(records).catch(() => {});
 }
 
-// Persistencia y manejo del Webhook de Google Apps Script
-const SAFETY_CONFIG_FILE = path.join(process.cwd(), "data", "safety_config.json");
+// Configuración del Webhook de Google Apps Script persistida en Supabase o en memoria
+let runtimeWebhookUrl = (
+  process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL ||
+  process.env.GOOGLE_APPS_SCRIPT_WEBHOOK ||
+  process.env.SAFETY_SHEET_WEBHOOK_URL ||
+  ""
+).trim();
+
+async function loadWebhookUrlFromSupabase(): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
+  try {
+    const { data } = await supabase
+      .from("app_config")
+      .select("value")
+      .eq("key", "google_apps_script_webhook_url")
+      .maybeSingle();
+    if (data && data.value) {
+      runtimeWebhookUrl = String(data.value).trim();
+    }
+  } catch {}
+}
+
+loadWebhookUrlFromSupabase().catch(() => {});
 
 function getSafetyWebhookUrl(): string {
-  if (process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL?.trim()) {
-    return process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL.trim();
-  }
-  if (process.env.SAFETY_SHEET_WEBHOOK_URL?.trim()) {
-    return process.env.SAFETY_SHEET_WEBHOOK_URL.trim();
-  }
+  if (runtimeWebhookUrl) return runtimeWebhookUrl;
+  return (
+    process.env.GOOGLE_APPS_SCRIPT_WEBHOOK_URL?.trim() ||
+    process.env.GOOGLE_APPS_SCRIPT_WEBHOOK?.trim() ||
+    process.env.SAFETY_SHEET_WEBHOOK_URL?.trim() ||
+    ""
+  );
+}
+
+async function saveWebhookUrlToSupabase(url: string): Promise<void> {
+  const supabase = getSupabase();
+  if (!supabase) return;
   try {
-    if (fs.existsSync(SAFETY_CONFIG_FILE)) {
-      const cfg = JSON.parse(fs.readFileSync(SAFETY_CONFIG_FILE, "utf-8"));
-      return cfg.webhookUrl || "";
-    }
-  } catch (e) {
-    console.error("[SAFETY] Error reading safety config:", e);
+    const { error } = await supabase.from("app_config").upsert({
+      key: "google_apps_script_webhook_url",
+      value: url,
+      updated_at: new Date().toISOString()
+    }, { onConflict: "key" });
+    if (error) console.warn("[SUPABASE APP_CONFIG ERROR]:", error.message);
+  } catch (err) {
+    console.warn("[SUPABASE APP_CONFIG EXCEPTION]:", err);
   }
-  return "";
 }
 
 function saveSafetyWebhookUrl(url: string) {
-  try {
-    const dir = path.dirname(SAFETY_CONFIG_FILE);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(SAFETY_CONFIG_FILE, JSON.stringify({ webhookUrl: url.trim(), updatedAt: new Date().toISOString() }, null, 2), "utf-8");
-  } catch (e) {
-    console.error("[SAFETY] Error saving safety config:", e);
-  }
+  runtimeWebhookUrl = url.trim();
+  saveWebhookUrlToSupabase(runtimeWebhookUrl).catch(() => {});
 }
 
 function isDrivePermissionError(errorMsg?: string): boolean {
@@ -854,8 +718,8 @@ async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean;
 }
 
 // 1. Obtener todas las novedades Safety
-app.get("/api/safety-novedades", (_req, res) => {
-  const records = loadSafetyRecords();
+app.get(["/api/safety-novedades", "/safety-novedades"], async (_req, res) => {
+  const records = await loadSafetyRecords();
   const pendientes = records.filter((r) => r.estado === "PENDIENTE").length;
   const realizados = records.filter((r) => r.estado === "REALIZADO").length;
 
@@ -872,21 +736,14 @@ app.get("/api/safety-novedades", (_req, res) => {
 // ============================================================
 // 2. Subida de archivo de evidencia (Fotos, Collages, Comprobantes)
 // ============================================================
-// NUEVO FLUJO MIGRADO A CLOUDINARY (PERMANENCIA EN VERCEL):
+// FLUJO MIGRADO A SUPABASE STORAGE (BUCKET 'evidencias'):
 // 1. Cliente envía imagen en base64 y correo institucional.
 // 2. Servidor valida correo de dominio @logisticos.co.
-// 3. Servidor sube directamente a Cloudinary (folder: "safety-evidencias").
-// 4. Cloudinary devuelve una URL segura HTTPS permanente (secure_url).
-// 5. La secure_url se devuelve al cliente para ser almacenada en la hoja y registros.
-// 6. (Opcional/No bloqueante) Si hay Apps Script configurado, se envía respaldo secundario a Drive.
-//
-// NOTA IMPORTANTE PARA VERCEL:
-// Configurar las variables en Vercel Dashboard (Project Settings -> Environment Variables):
-// - CLOUDINARY_CLOUD_NAME
-// - CLOUDINARY_API_KEY
-// - CLOUDINARY_API_SECRET
+// 3. Servidor sube directamente a Supabase Storage (bucket: "evidencias", folder: "evidencias-safety").
+// 4. Supabase devuelve la URL pública HTTPS permanente.
+// 5. La URL se devuelve al cliente para ser almacenada en Supabase Postgres y Google Sheets.
 // ============================================================
-app.post("/api/safety-novedades/upload", async (req, res) => {
+app.post(["/api/safety-novedades/upload", "/safety-novedades/upload", "/api/upload", "/upload"], async (req, res) => {
   const { filename, base64Data, userEmail } = req.body || {};
 
   // Validación de correo institucional
@@ -902,37 +759,33 @@ app.post("/api/safety-novedades/upload", async (req, res) => {
   }
 
   try {
-    console.log(`[STORAGE UPLOAD] Procesando evidencia (usuario: ${userEmail}, filename: ${filename || 'sin_nombre'})...`);
+    console.log(`[STORAGE UPLOAD] Procesando evidencia para Supabase Storage (usuario: ${userEmail}, filename: ${filename || 'sin_nombre'})...`);
 
-    // Subida resiliente: Cloudinary si está configurado, o local como fallback seguro
-    const storeRes = await processAndStoreEvidence(base64Data, filename, req, "safety-evidencias");
+    const storeRes = await processAndStoreEvidence(base64Data, filename, req, "evidencias-safety");
     const evidenceUrl = storeRes.url;
-    console.log(`[STORAGE UPLOAD SUCCESS] URL generada: ${evidenceUrl} (isCloudinary: ${storeRes.isCloudinary})`);
+    console.log(`[STORAGE UPLOAD SUCCESS] URL generada en Supabase: ${evidenceUrl}`);
 
-    // Respuesta con la URL definitiva (Cloudinary o Servidor)
     return res.json({
       success: true,
       url: evidenceUrl,
       secure_url: evidenceUrl,
-      public_id: storeRes.public_id,
+      publicUrl: evidenceUrl,
+      path: storeRes.path,
       filename: storeRes.filename,
-      isCloudinary: storeRes.isCloudinary,
-      notice: storeRes.notice,
-      message: storeRes.isCloudinary
-        ? "Evidencia almacenada permanentemente en Cloudinary exitosamente."
-        : "Evidencia almacenada exitosamente en el servidor."
+      isSupabase: true,
+      message: "Evidencia almacenada permanentemente en Supabase Storage (bucket 'evidencias') exitosamente."
     });
   } catch (err: any) {
     console.error("[STORAGE UPLOAD ERROR]:", err);
     return res.status(500).json({
       success: false,
-      message: `Error al procesar la evidencia: ${err.message || 'Error desconocido'}`
+      message: `Error al procesar la evidencia en Supabase: ${err.message || 'Error desconocido'}`
     });
   }
 });
 
 // 3. Flujo 1 — Reportar novedad (crea fila nueva)
-app.post("/api/safety-novedades/report", async (req, res) => {
+app.post(["/api/safety-novedades/report", "/safety-novedades/report", "/api/report", "/report"], async (req, res) => {
   const {
     userEmail,
     categoria,
@@ -982,7 +835,7 @@ app.post("/api/safety-novedades/report", async (req, res) => {
     });
   }
 
-  const records = loadSafetyRecords();
+  const records = await loadSafetyRecords();
   const maxFila = records.reduce((max, r) => Math.max(max, r.fila || 0), 1);
   const nextFila = maxFila + 1;
 
@@ -1035,7 +888,7 @@ app.post("/api/safety-novedades/report", async (req, res) => {
 // 1. Si hay archivo en base64, se sube primero a Google Drive. Si falla, se detiene inmediatamente con error.
 // 2. Se escribe en la hoja de Google Sheets vía Apps Script. Si falla, NO se marca la fila como REALIZADO.
 // 3. Solo cuando Apps Script confirma éxito, se actualiza el registro local a REALIZADO.
-app.post("/api/safety-novedades/close", async (req, res) => {
+app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close", "/close"], async (req, res) => {
   const {
     userEmail,
     id,
@@ -1093,7 +946,7 @@ app.post("/api/safety-novedades/close", async (req, res) => {
     });
   }
 
-  const records = loadSafetyRecords();
+  const records = await loadSafetyRecords();
   const index = records.findIndex((r) => r.id === id || (fila && r.fila === Number(fila)));
 
   if (index === -1) {
@@ -1181,7 +1034,7 @@ app.post("/api/safety-novedades/close", async (req, res) => {
 // 2. Si falla Drive, se detiene y devuelve error 502 sin tocar la fila.
 // 3. Se escribe el link en la celda de la hoja vía Apps Script. Si falla la hoja, se detiene y no se modifica la fila.
 // 4. Solo cuando la hoja confirma la escritura, se actualiza el registro local.
-app.post("/api/safety-novedades/update-evidence", async (req, res) => {
+app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evidence", "/api/update-evidence", "/update-evidence"], async (req, res) => {
   const {
     userEmail,
     email,
@@ -1215,7 +1068,7 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
     });
   }
 
-  const records = loadSafetyRecords();
+  const records = await loadSafetyRecords();
   const index = records.findIndex((r) => r.id === id || (fila && r.fila === Number(fila)));
 
   if (index === -1) {
@@ -1353,8 +1206,8 @@ app.post("/api/safety-novedades/update-evidence", async (req, res) => {
 });
 
 // 5. Exportar a CSV con el formato exacto de las 6 columnas de Google Sheets
-app.get("/api/safety-novedades/export-csv", (_req, res) => {
-  const records = loadSafetyRecords();
+app.get(["/api/safety-novedades/export-csv", "/safety-novedades/export-csv", "/api/export-csv", "/export-csv"], async (_req, res) => {
+  const records = await loadSafetyRecords();
 
   const escapeCsv = (str: any) => {
     const s = String(str ?? "");
@@ -1381,25 +1234,38 @@ app.get("/api/safety-novedades/export-csv", (_req, res) => {
   res.send(csvOutput);
 });
 
-// 5.5 Estado del almacenamiento de evidencias (Cloudinary y Local Server)
-app.get("/api/safety-novedades/storage-status", (_req, res) => {
-  const creds = getCloudinaryCredentials();
+// 5.5 Estado del almacenamiento de evidencias y persistencia (Supabase Storage + Postgres)
+app.get(["/api/safety-novedades/storage-status", "/safety-novedades/storage-status", "/api/storage-status", "/storage-status"], async (_req, res) => {
+  const supabase = getSupabase();
+  const hasUrl = Boolean(process.env.SUPABASE_URL?.trim());
+  const hasKey = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || process.env.SUPABASE_ANON_KEY?.trim());
+
+  let storageBucketOk = false;
+  let postgresTableOk = false;
+
+  if (supabase) {
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      storageBucketOk = Boolean(buckets?.some((b) => b.name === "evidencias"));
+    } catch {}
+
+    try {
+      const { error } = await supabase.from("safety_novedades").select("id").limit(1);
+      postgresTableOk = !error;
+    } catch {}
+  }
+
   return res.json({
     success: true,
-    cloudinary: {
-      isConfigured: creds.isConfigured,
-      statusType: creds.statusType,
-      statusMessage: creds.statusMessage,
-      cloudName: creds.cloud_name ? `${creds.cloud_name.slice(0, 3)}***` : "",
-      hasApiKey: Boolean(creds.api_key),
-      hasApiSecret: Boolean(creds.api_secret),
-      isSecretSameAsKey: creds.isSecretSameAsKey,
-      isSecretSuspiciouslyShort: creds.isSecretSuspiciouslyShort
-    },
-    localServer: {
-      isActive: true,
-      directory: "data/uploads",
-      notice: "Almacenamiento local del servidor disponible como respaldo de alta resiliencia."
+    mode: "supabase_serverless",
+    supabase: {
+      isConfigured: hasUrl && hasKey,
+      hasUrl,
+      hasServiceKey: hasKey,
+      storageBucketOk,
+      postgresTableOk,
+      bucketName: "evidencias",
+      tableName: "safety_novedades"
     },
     webhook: {
       isConfigured: Boolean(getSafetyWebhookUrl())
@@ -1407,26 +1273,20 @@ app.get("/api/safety-novedades/storage-status", (_req, res) => {
   });
 });
 
-// 6. Obtener el código de Google Apps Script y su documentación
-app.get("/api/safety-novedades/script", (_req, res) => {
-  const scriptPath = path.join(process.cwd(), "scripts", "google_apps_script_novedades_safety.js");
-  try {
-    const scriptContent = fs.readFileSync(scriptPath, "utf-8");
-    return res.json({
-      success: true,
-      spreadsheetId: GOOGLE_SHEET_ID,
-      sheetName: "NOVEDADES-SAFETY",
-      script: scriptContent,
-      webhookUrl: getSafetyWebhookUrl(),
-      isConfigured: Boolean(getSafetyWebhookUrl())
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, message: "Error leyendo script: " + err.message });
-  }
+// 6. Obtener el código de Google Apps Script y su documentación (embebido en memoria, sin fs)
+app.get(["/api/safety-novedades/script", "/safety-novedades/script", "/api/script", "/script"], (_req, res) => {
+  return res.json({
+    success: true,
+    spreadsheetId: GOOGLE_SHEET_ID,
+    sheetName: "NOVEDADES-SAFETY",
+    script: GOOGLE_APPS_SCRIPT_CODE,
+    webhookUrl: getSafetyWebhookUrl(),
+    isConfigured: Boolean(getSafetyWebhookUrl())
+  });
 });
 
 // 7. Configuración del Webhook URL de Google Apps Script
-app.get("/api/safety-novedades/webhook-config", (_req, res) => {
+app.get(["/api/safety-novedades/webhook-config", "/safety-novedades/webhook-config", "/api/webhook-config", "/webhook-config"], (_req, res) => {
   const webhookUrl = getSafetyWebhookUrl();
   return res.json({
     success: true,
@@ -1437,7 +1297,7 @@ app.get("/api/safety-novedades/webhook-config", (_req, res) => {
   });
 });
 
-app.post("/api/safety-novedades/webhook-config", (req, res) => {
+app.post(["/api/safety-novedades/webhook-config", "/safety-novedades/webhook-config", "/api/webhook-config", "/webhook-config"], (req, res) => {
   const { webhookUrl, userEmail } = req.body || {};
 
   if (userEmail && !isValidInstitutionalEmail(userEmail)) {
@@ -1454,7 +1314,7 @@ app.post("/api/safety-novedades/webhook-config", (req, res) => {
 });
 
 // 8. Test de conectividad con Google Apps Script (diagnóstico de Sheets y Google Drive)
-app.post("/api/safety-novedades/test-webhook", async (req, res) => {
+app.post(["/api/safety-novedades/test-webhook", "/safety-novedades/test-webhook", "/api/test-webhook", "/test-webhook"], async (req, res) => {
   const targetUrl = req.body?.webhookUrl || getSafetyWebhookUrl();
   if (!targetUrl || !targetUrl.startsWith("http")) {
     return res.status(400).json({ success: false, message: "URL de Webhook inválida o no configurada." });
@@ -1558,7 +1418,7 @@ app.post("/api/safety-novedades/test-webhook", async (req, res) => {
 });
 
 // 9. Sincronización masiva de todos los registros actuales hacia la hoja
-app.post("/api/safety-novedades/bulk-sync", async (req, res) => {
+app.post(["/api/safety-novedades/bulk-sync", "/safety-novedades/bulk-sync", "/api/bulk-sync", "/bulk-sync"], async (req, res) => {
   const { userEmail } = req.body || {};
   if (!isValidInstitutionalEmail(userEmail)) {
     return res.status(403).json({ success: false, message: "Acceso denegado: Correo institucional requerido" });
@@ -1572,7 +1432,7 @@ app.post("/api/safety-novedades/bulk-sync", async (req, res) => {
     });
   }
 
-  const records = loadSafetyRecords();
+  const records = await loadSafetyRecords();
   const syncResult = await syncToGoogleAppsScript({
     action: "sync_all",
     records
@@ -1594,32 +1454,9 @@ app.post("/api/safety-novedades/bulk-sync", async (req, res) => {
   }
 });
 
-// Manejador 404 estricto para cualquier ruta /api/* no coincidente
-// Previene que Vite capture la petición y devuelva el HTML de index.html con código 200
-app.all("/api/*", (req, res) => {
-  return res.status(404).json({
-    success: false,
-    message: `Ruta de API no encontrada: ${req.method} ${req.originalUrl || req.path}`
-  });
-});
-
-// Middleware global de errores para rutas /api/*
-// Garantiza que cualquier excepción (incluyendo PayloadTooLargeError o JSON corrupto) devuelva JSON y nunca HTML
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (req.path.startsWith("/api/")) {
-    console.error(`[API UNHANDLED ERROR] ${req.method} ${req.path}:`, err);
-    const status = typeof err.status === "number" ? err.status : (typeof err.statusCode === "number" ? err.statusCode : 500);
-    return res.status(status).json({
-      success: false,
-      message: err.message || "Error interno del servidor en la API",
-      error: String(err)
-    });
-  }
-  next(err);
-});
-
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
@@ -1633,9 +1470,41 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[AON GALAPA] Server running on http://0.0.0.0:${PORT}`);
+  // Manejador 404 estricto para cualquier ruta /api/* no coincidente
+  // Previene que peticiones a la API devuelvan el HTML de la SPA
+  app.all("/api/*", (req, res) => {
+    return res.status(404).json({
+      success: false,
+      message: `Ruta de API no encontrada: ${req.method} ${req.originalUrl || req.path}`
+    });
+  });
+
+  // Middleware global de errores para rutas /api/*
+  // Garantiza que cualquier excepción devuelva JSON y nunca HTML
+  app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith("/api/")) {
+      console.error(`[API UNHANDLED ERROR] ${req.method} ${req.path}:`, err);
+      const status = typeof err.status === "number" ? err.status : (typeof err.statusCode === "number" ? err.statusCode : 500);
+      return res.status(status).json({
+        success: false,
+        message: err.message || "Error interno del servidor en la API",
+        error: String(err)
+      });
+    }
+    next(err);
+  });
+
+  const serverPort = Number(process.env.PORT) || PORT;
+  app.listen(serverPort, "0.0.0.0", () => {
+    console.log(`[AON GALAPA] Server running on http://0.0.0.0:${serverPort}`);
   });
 }
 
-startServer();
+
+// En Vercel Serverless, Vercel no corre servidores Express persistentes (no ejecuta app.listen).
+// En desarrollo y entornos locales / contenedor se inicia normalmente con startServer().
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;

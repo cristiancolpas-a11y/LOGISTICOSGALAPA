@@ -590,7 +590,32 @@ function doPost(e) {
       return createJsonResponse(true, "Sincronización masiva de " + rowsToAdd.length + " filas completada con éxito.");
     }
 
-    return createJsonResponse(false, "Acción desconocida: " + action + ". Use 'report', 'close' o 'sync_all'.");
+    // -----------------------------------------------------------------
+    // ACCIÓN 5: OBTENER TODOS LOS REGISTROS DE NOVEDADES
+    // -----------------------------------------------------------------
+    if (action === "get_records" || action === "read_records" || action === "fetch_records" || action === "read") {
+      var lastRow = sheet.getLastRow();
+      if (lastRow < 2) {
+        return createJsonResponse(true, "No hay novedades registradas.", { records: [] });
+      }
+      var values = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+      var list = [];
+      for (var i = 0; i < values.length; i++) {
+        list.push({
+          fila: i + 2,
+          id: "NOV-" + String(i + 1).padStart(3, "0"),
+          categoria: String(values[i][0] || "General"),
+          placa: normalizePlate(values[i][1] || ""),
+          novedad: String(values[i][2] || ""),
+          evidenciaReporte: String(values[i][3] || ""),
+          evidenciaCorregida: String(values[i][4] || ""),
+          estado: String(values[i][5] || "PENDIENTE").toUpperCase().indexOf("REALIZADO") !== -1 ? "REALIZADO" : "PENDIENTE"
+        });
+      }
+      return createJsonResponse(true, "Novedades obtenidas con éxito.", { records: list });
+    }
+
+    return createJsonResponse(false, "Acción desconocida: " + action + ". Use 'report', 'close', 'sync_all' o 'get_records'.");
 
   } catch (err) {
     return createJsonResponse(false, "Error interno en Google Apps Script: " + err.toString());
@@ -633,6 +658,26 @@ function doGet(e) {
         if (est === "REALIZADO") stats.realizados++;
         else stats.pendientes++;
       }
+    }
+
+    if (e && e.parameter && (e.parameter.action === "get_records" || e.parameter.action === "records")) {
+      var recordsList = [];
+      if (lastRow > 1) {
+        var vals = sheet.getRange(2, 1, lastRow - 1, 6).getValues();
+        for (var k = 0; k < vals.length; k++) {
+          recordsList.push({
+            fila: k + 2,
+            id: "NOV-" + String(k + 1).padStart(3, "0"),
+            categoria: String(vals[k][0] || "General"),
+            placa: normalizePlate(vals[k][1] || ""),
+            novedad: String(vals[k][2] || ""),
+            evidenciaReporte: String(vals[k][3] || ""),
+            evidenciaCorregida: String(vals[k][4] || ""),
+            estado: String(vals[k][5] || "PENDIENTE").toUpperCase().indexOf("REALIZADO") !== -1 ? "REALIZADO" : "PENDIENTE"
+          });
+        }
+      }
+      return createJsonResponse(true, "Registros obtenidos.", { records: recordsList });
     }
 
     // Comprobar estado de acceso a Google Drive

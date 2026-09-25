@@ -1,27 +1,23 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   AlertTriangle,
   AlertOctagon,
   CheckCircle2,
-  Filter,
   Search,
   Download,
   ChevronLeft,
   ChevronRight,
-  ShieldAlert,
-  ArrowRight,
-  Truck,
-  User
+  ShieldAlert
 } from 'lucide-react';
 import { NormalizedCheckListRecord, KpiSummary, SeverityLevel } from '../../types';
 
 interface AlertsExceptionsViewProps {
-  records: NormalizedCheckListRecord[];
-  kpis: KpiSummary;
+  records?: NormalizedCheckListRecord[];
+  kpis?: KpiSummary;
 }
 
 export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
-  records,
+  records = [],
   kpis
 }) => {
   const [selectedSeverity, setSelectedSeverity] = useState<SeverityLevel | 'ALL'>('CRITICO');
@@ -29,23 +25,36 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 12;
 
-  const filtered = records.filter((r) => {
-    if (selectedSeverity !== 'ALL' && r.severity !== selectedSeverity) return false;
+  const totalNonCompliances = kpis?.totalNonCompliances ?? 0;
+  const criticalCount = kpis?.criticalCount ?? 0;
+  const highSeverityCount = kpis?.highSeverityCount ?? 0;
+  const completeRecords = (kpis?.completeRecords ?? 0).toLocaleString();
 
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      return (
-        r.vehicle.toLowerCase().includes(q) ||
-        r.conductor.toLowerCase().includes(q) ||
-        r.contratista.toLowerCase().includes(q) ||
-        r.dateFormatted.includes(q)
-      );
-    }
-    return true;
-  });
+  const safeRecords = useMemo(() => Array.isArray(records) ? records : [], [records]);
 
-  const totalPages = Math.ceil(filtered.length / itemsPerPage) || 1;
-  const paginated = filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const filtered = useMemo(() => {
+    return safeRecords.filter((r) => {
+      if (!r) return false;
+      if (selectedSeverity !== 'ALL' && r.severity !== selectedSeverity) return false;
+
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        return (
+          (r.vehicle || '').toLowerCase().includes(q) ||
+          (r.conductor || '').toLowerCase().includes(q) ||
+          (r.contratista || '').toLowerCase().includes(q) ||
+          (r.dateFormatted || '').includes(q)
+        );
+      }
+      return true;
+    });
+  }, [safeRecords, selectedSeverity, searchTerm]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / itemsPerPage));
+  const paginated = useMemo(() => {
+    return filtered.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  }, [filtered, currentPage, itemsPerPage]);
+
 
   const handleExportCsv = () => {
     const headers = [
@@ -103,7 +112,7 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
                   Gestión de Alertas y Excepciones
                 </h2>
                 <span className="text-[10px] bg-rose-500/10 text-rose-400 font-bold px-2 py-0.5 rounded-full border border-rose-500/20">
-                  {kpis.totalNonCompliances} Casos con Novedad
+                  {totalNonCompliances} Casos con Novedad
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -143,7 +152,7 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
               <AlertOctagon className="w-4 h-4 text-rose-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-rose-400">{kpis.criticalCount}</span>
+              <span className="text-3xl font-black text-rose-400">{criticalCount}</span>
               <span className="text-xs text-slate-400">casos</span>
             </div>
             <p className="text-[11px] text-rose-300/80 mt-1 font-medium">
@@ -171,7 +180,7 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
               <AlertTriangle className="w-4 h-4 text-amber-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-amber-400">{kpis.highSeverityCount}</span>
+              <span className="text-3xl font-black text-amber-400">{highSeverityCount}</span>
               <span className="text-xs text-slate-400">casos</span>
             </div>
             <p className="text-[11px] text-amber-300/80 mt-1 font-medium">
@@ -199,7 +208,7 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
               <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-emerald-400">{kpis.completeRecords.toLocaleString()}</span>
+              <span className="text-3xl font-black text-emerald-400">{completeRecords}</span>
               <span className="text-xs text-slate-400">casos</span>
             </div>
             <p className="text-[11px] text-emerald-300/80 mt-1 font-medium">
@@ -396,3 +405,6 @@ export const AlertsExceptionsView: React.FC<AlertsExceptionsViewProps> = ({
     </div>
   );
 };
+
+export default AlertsExceptionsView;
+
