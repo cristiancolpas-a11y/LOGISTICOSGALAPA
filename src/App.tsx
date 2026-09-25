@@ -52,6 +52,8 @@ import {
   Sparkles
 } from 'lucide-react';
 
+import { AlertsExceptionsView } from './components/views/AlertsExceptionsView';
+
 // Lazy loaded views for code splitting and faster initial bundle load
 const ExecutiveDashboardView = React.lazy(() =>
   import('./components/views/ExecutiveDashboardView').then((m) => ({
@@ -66,11 +68,6 @@ const SalidaTrackingView = React.lazy(() =>
 const RetornoTrackingView = React.lazy(() =>
   import('./components/views/RetornoTrackingView').then((m) => ({
     default: m.RetornoTrackingView
-  }))
-);
-const AlertsExceptionsView = React.lazy(() =>
-  import('./components/views/AlertsExceptionsView').then((m) => ({
-    default: m.AlertsExceptionsView
   }))
 );
 const RawDatabaseView = React.lazy(() =>
