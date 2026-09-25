@@ -656,6 +656,13 @@ async function syncToGoogleAppsScript(payload: any, timeoutMs: number = 8000): P
     };
   }
 
+  // 2. Sanitizar payload: NUNCA enviar cadenas base64 a Google Apps Script
+  // Solo se envían enlaces URL públicos de Supabase y metadatos limpios
+  const cleanPayload = { ...payload };
+  delete cleanPayload.fileBase64;
+  delete cleanPayload.base64Data;
+  delete cleanPayload.base64;
+
   const controller = new AbortController();
   const timer = setTimeout(() => {
     controller.abort();
@@ -666,7 +673,7 @@ async function syncToGoogleAppsScript(payload: any, timeoutMs: number = 8000): P
       method: "POST",
       // Google Apps Script maneja text/plain de manera más confiable sin problemas de preflight CORS
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(cleanPayload),
       redirect: "follow",
       signal: controller.signal
     });
@@ -937,19 +944,19 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
   if (finalEvidencia && (finalEvidencia.includes("1AON_") || finalEvidencia.includes("predictive_"))) {
     return res.status(400).json({
       success: false,
-      message: "El enlace proporcionado es un identificador predictivo no confirmado. Debe subirse la imagen real a Google Drive."
+      message: "El enlace proporcionado es un identificador predictivo no confirmado. Debe subirse la imagen real."
     });
   }
 
-  // Si se envió un archivo en base64 directamente, procesarlo y guardarlo (Cloudinary o local)
+  // Si se envió un archivo en base64 directamente, procesarlo y guardarlo en Supabase Storage (bucket 'evidencias')
   if (!finalEvidencia && fileBase64) {
     try {
-      console.log(`[SAFETY CLOSE] Procesando evidencia de corrección (fila: ${fila})...`);
+      console.log(`[SAFETY CLOSE] Procesando evidencia de corrección en Supabase Storage (fila: ${fila})...`);
       const storeRes = await processAndStoreEvidence(
         fileBase64,
         filename || `evidencia_cierre_fila${fila || 'sin_fila'}`,
         req,
-        "safety-evidencias"
+        "evidencias-safety"
       );
       finalEvidencia = storeRes.url;
       console.log(`[SAFETY CLOSE EVIDENCE SUCCESS]: ${finalEvidencia}`);
@@ -957,7 +964,7 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
       console.error("[SAFETY CLOSE EVIDENCE ERROR]:", fErr);
       return res.status(500).json({
         success: false,
-        message: "Error al guardar la evidencia de corrección: " + (fErr.message || "Error desconocido")
+        message: "Error al guardar la evidencia de corrección en Supabase: " + (fErr.message || "Error desconocido")
       });
     }
   }
@@ -1006,19 +1013,38 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
   saveSafetyRecords(records);
 
   // 2. Sincronizar cierre con Google Sheets mediante Google Apps Script (con timeout de 8s, mejor esfuerzo)
-  console.log(`[SAFETY CLOSE] Sincronizando cierre en Google Sheets para fila #${record.fila} (${record.placa})...`);
+  // SOLO enviamos el enlace finalEvidencia (link de Supabase), NUNCA base64
+  console.log(`[SAFETY CLOSE] Sincronizando link en Google Sheets para fila #${record.fila} (${record.placa})...`);
   let sheetSyncResult: any = null;
   try {
+    // Intentar primero con action: "update_evidence" y type: "corregida"
     sheetSyncResult = await syncToGoogleAppsScript({
-      action: "close",
+      action: "update_evidence",
       userEmail: String(userEmail).trim().toLowerCase(),
       id: record.id,
       fila: record.fila,
       placa: record.placa,
-      novedad: updatedNovedad,
+      type: "corregida",
+      columnIndex: 5,
+      evidenciaUrl: finalEvidencia,
       evidenciaCorregida: finalEvidencia,
+      novedad: updatedNovedad,
       notaCorreccion: String(notaCorreccion || "").trim()
     }, 8000);
+
+    // Fallback a action: "close" si Apps Script usa el handler tradicional de cierre
+    if (!sheetSyncResult?.success) {
+      sheetSyncResult = await syncToGoogleAppsScript({
+        action: "close",
+        userEmail: String(userEmail).trim().toLowerCase(),
+        id: record.id,
+        fila: record.fila,
+        placa: record.placa,
+        novedad: updatedNovedad,
+        evidenciaCorregida: finalEvidencia,
+        notaCorreccion: String(notaCorreccion || "").trim()
+      }, 8000);
+    }
   } catch (syncErr: any) {
     console.warn("[SAFETY] Aviso sincronizando cierre con Google Sheets (no bloqueante):", syncErr?.message);
     sheetSyncResult = { success: false, error: syncErr?.message };
@@ -1112,38 +1138,38 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
     });
   }
 
-  let finalDriveUrl = String(evidenciaUrl || "").trim();
+  let finalEvidenceUrl = String(evidenciaUrl || "").trim();
 
   // Validar que no sea un link predictivo simulado
-  if (finalDriveUrl && (finalDriveUrl.includes("1AON_") || finalDriveUrl.includes("predictive_"))) {
+  if (finalEvidenceUrl && (finalEvidenceUrl.includes("1AON_") || finalEvidenceUrl.includes("predictive_"))) {
     return res.status(400).json({
       success: false,
-      message: "El enlace proporcionado es un identificador predictivo no confirmado. Debe subirse la imagen real a Google Drive."
+      message: "El enlace proporcionado es un identificador predictivo no confirmado. Debe subirse la imagen real."
     });
   }
 
-  // Si se envió un archivo en base64, procesarlo y guardarlo (Cloudinary o local)
-  if (!finalDriveUrl && fileBase64) {
+  // Si se envió un archivo en base64, procesarlo y guardarlo en Supabase Storage (bucket 'evidencias')
+  if (!finalEvidenceUrl && fileBase64) {
     try {
-      console.log(`[SAFETY UPDATE EVIDENCE] Guardando evidencia para fila #${record.fila}...`);
+      console.log(`[SAFETY UPDATE EVIDENCE] Guardando evidencia en Supabase Storage para fila #${record.fila}...`);
       const storeRes = await processAndStoreEvidence(
         fileBase64,
         effectiveFilename || `evidencia_${normalizedType}_fila${record.fila}`,
         req,
-        "safety-evidencias"
+        "evidencias-safety"
       );
-      finalDriveUrl = storeRes.url;
-      console.log(`[SAFETY UPDATE EVIDENCE SUCCESS]: ${finalDriveUrl}`);
+      finalEvidenceUrl = storeRes.url;
+      console.log(`[SAFETY UPDATE EVIDENCE SUCCESS]: ${finalEvidenceUrl}`);
     } catch (fErr: any) {
       console.error("[SAFETY UPDATE EVIDENCE ERROR]:", fErr);
       return res.status(500).json({
         success: false,
-        message: "Error al guardar evidencia: " + (fErr.message || "Error desconocido")
+        message: "Error al guardar evidencia en Supabase Storage: " + (fErr.message || "Error desconocido")
       });
     }
   }
 
-  if (!finalDriveUrl) {
+  if (!finalEvidenceUrl) {
     return res.status(400).json({
       success: false,
       message: "Debe suministrar un archivo de evidencia para registrar."
@@ -1152,9 +1178,9 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
 
   // 1. Guardar y actualizar inmediatamente en Supabase Postgres y memoria local (fuente de verdad)
   if (normalizedType === "reporte") {
-    record.evidenciaReporte = finalDriveUrl;
+    record.evidenciaReporte = finalEvidenceUrl;
   } else {
-    record.evidenciaCorregida = finalDriveUrl;
+    record.evidenciaCorregida = finalEvidenceUrl;
     if (record.estado === "PENDIENTE") {
       record.estado = "REALIZADO";
       record.cerradoPor = effectiveEmail;
@@ -1166,8 +1192,8 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
   saveSafetyRecords(records);
 
   // 2. Sincronización en segundo plano con Google Sheets (mejor esfuerzo, con timeout de 8s)
-  // No bloquea ni tumba la respuesta al usuario si Google Apps Script falla o tarda
-  console.log(`[SAFETY UPDATE EVIDENCE] Sincronizando con Google Sheets para fila #${record.fila} (${record.placa})...`);
+  // SOLO se envía el enlace (evidenciaUrl: finalEvidenceUrl), NUNCA base64 ni llamadas a Drive.
+  console.log(`[SAFETY UPDATE EVIDENCE] Sincronizando link con Google Sheets para fila #${record.fila} (${record.placa})...`);
   let sheetSyncResult: any = null;
   try {
     sheetSyncResult = await syncToGoogleAppsScript({
@@ -1177,7 +1203,7 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
       placa: record.placa,
       type: normalizedType,
       columnIndex: normalizedType === "reporte" ? 4 : 5,
-      evidenciaUrl: finalDriveUrl
+      evidenciaUrl: finalEvidenceUrl
     }, 8000);
 
     // Fallback para corregida si Apps Script tiene versión previa
@@ -1188,7 +1214,7 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
         id: record.id,
         fila: record.fila,
         placa: record.placa,
-        evidenciaCorregida: finalDriveUrl
+        evidenciaCorregida: finalEvidenceUrl
       }, 8000);
     }
   } catch (syncErr: any) {
@@ -1201,8 +1227,8 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
     success: true,
     record,
     type: normalizedType,
-    url: finalDriveUrl,
-    evidenceUrl: finalDriveUrl,
+    url: finalEvidenceUrl,
+    evidenceUrl: finalEvidenceUrl,
     sheetSync: sheetSyncResult,
     message: sheetSyncResult?.success
       ? `${colLabel} guardada en Supabase y sincronizada en Google Sheets (fila #${record.fila}).`

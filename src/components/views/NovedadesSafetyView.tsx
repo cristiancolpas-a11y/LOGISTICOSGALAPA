@@ -1550,7 +1550,7 @@ const ReportarNovedadModal: React.FC<ReportarNovedadModalProps> = ({
     let finalEvidenciaReporte = evidenciaUrl.trim();
 
     try {
-      // Si el usuario seleccionó 1 a 4 fotos para el collage, subir a Google Drive
+      // Si el usuario seleccionó 1 a 4 fotos para el collage, subir a Supabase Storage
       if (!finalEvidenciaReporte && collageResult) {
         setIsUploading(true);
         try {
@@ -1568,13 +1568,13 @@ const ReportarNovedadModal: React.FC<ReportarNovedadModalProps> = ({
             finalEvidenciaReporte = uploadData.url;
             setEvidenciaUrl(uploadData.url);
           } else {
-            setErrorNotice(uploadData.message || 'Error al subir el collage de evidencia a Google Drive.');
+            setErrorNotice(uploadData.message || 'Error al subir el collage de evidencia a Supabase Storage.');
             setIsSubmitting(false);
             setIsUploading(false);
             return;
           }
         } catch (uErr: any) {
-          setErrorNotice('Error al subir el collage a Drive: ' + uErr.message);
+          setErrorNotice('Error al subir el collage a Supabase Storage: ' + uErr.message);
           setIsSubmitting(false);
           setIsUploading(false);
           return;
@@ -1990,7 +1990,7 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
     let finalEvidenciaCorregida = evidenciaCorregida.trim();
 
     try {
-      // Si el usuario seleccionó 1 a 4 fotos para el collage, subir a Google Drive
+      // Si el usuario seleccionó 1 a 4 fotos para el collage, subir a Supabase Storage
       if (!finalEvidenciaCorregida && collageResult) {
         setIsUploading(true);
         try {
@@ -2009,13 +2009,13 @@ const CerrarNovedadModal: React.FC<CerrarNovedadModalProps> = ({
             finalEvidenciaCorregida = uploadData.url;
             setEvidenciaCorregida(uploadData.url);
           } else {
-            setErrorNotice(uploadData.message || 'Error al procesar y subir el collage a Google Drive.');
+            setErrorNotice(uploadData.message || 'Error al procesar y subir el collage a Supabase Storage.');
             setIsSubmitting(false);
             setIsUploading(false);
             return;
           }
         } catch (uErr: any) {
-          setErrorNotice('Error al subir el collage a Google Drive: ' + uErr.message);
+          setErrorNotice('Error al subir el collage a Supabase Storage: ' + uErr.message);
           setIsSubmitting(false);
           setIsUploading(false);
           return;
