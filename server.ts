@@ -513,11 +513,15 @@ async function loadSafetyRecords(): Promise<SafetyNovedadItem[]> {
   const webhookUrl = getSafetyWebhookUrl();
   if (webhookUrl && webhookUrl.startsWith("http") && !webhookUrl.includes("/dev")) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
       const res = await fetch(webhookUrl, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "get_records" })
+        body: JSON.stringify({ action: "get_records" }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (data && data.success && Array.isArray(data.records) && data.records.length > 0) {
         inMemorySafetyRecords = data.records;
@@ -528,7 +532,7 @@ async function loadSafetyRecords(): Promise<SafetyNovedadItem[]> {
         return inMemorySafetyRecords;
       }
     } catch {
-      // Usar registros en memoria si la consulta en red no responde inmediatamente
+      // Usar registros en memoria si la consulta en red no responde inmediatamente o expira el timeout
     }
   }
 
@@ -638,7 +642,7 @@ function isDrivePermissionError(errorMsg?: string): boolean {
   );
 }
 
-async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean; result?: any; error?: string; skipped?: boolean }> {
+async function syncToGoogleAppsScript(payload: any, timeoutMs: number = 8000): Promise<{ success: boolean; result?: any; error?: string; skipped?: boolean }> {
   const webhookUrl = getSafetyWebhookUrl();
   if (!webhookUrl || !webhookUrl.startsWith("http")) {
     return { success: false, skipped: true, error: "No hay Webhook URL de Google Apps Script configurado" };
@@ -652,14 +656,21 @@ async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean;
     };
   }
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
   try {
     const res = await fetch(webhookUrl, {
       method: "POST",
       // Google Apps Script maneja text/plain de manera más confiable sin problemas de preflight CORS
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload),
-      redirect: "follow"
+      redirect: "follow",
+      signal: controller.signal
     });
+    clearTimeout(timer);
 
     const text = await res.text();
     let json: any = null;
@@ -715,10 +726,20 @@ async function syncToGoogleAppsScript(payload: any): Promise<{ success: boolean;
 
     return { success: true, result: json };
   } catch (err: any) {
+    clearTimeout(timer);
+    const isAbort = err?.name === "AbortError" || err?.message?.includes("aborted");
+    if (isAbort) {
+      console.warn(`[SAFETY GAS TIMEOUT]: La llamada al Webhook de Google Apps Script superó el límite de ${timeoutMs / 1000}s y fue abortada.`);
+      return {
+        success: false,
+        error: `Tiempo de espera agotado (${timeoutMs / 1000}s) al contactar Google Apps Script.`
+      };
+    }
     console.error("[SAFETY GOOGLE APPS SCRIPT SYNC ERROR]:", err);
     return { success: false, error: err?.message || String(err) };
   }
 }
+
 
 // 1. Obtener todas las novedades Safety
 app.get(["/api/safety-novedades", "/safety-novedades"], async (_req, res) => {
@@ -869,9 +890,9 @@ app.post(["/api/safety-novedades/report", "/safety-novedades/report", "/api/repo
       novedad: String(novedad).trim(),
       evidenciaReporte: String(evidenciaReporte || "").trim(),
       fila: nextFila
-    });
+    }, 8000);
   } catch (syncErr: any) {
-    console.error("[SAFETY] Error sincronizando con Google Sheets:", syncErr);
+    console.warn("[SAFETY] Error sincronizando reporte con Google Sheets (no bloqueante):", syncErr);
     sheetSyncResult = { success: false, error: syncErr?.message };
   }
 
@@ -887,10 +908,10 @@ app.post(["/api/safety-novedades/report", "/safety-novedades/report", "/api/repo
 });
 
 // 4. Flujo 2 — Cerrar novedad (actualiza fila existente a REALIZADO)
-// ORDEN DE EJECUCIÓN ESTRICTO:
-// 1. Si hay archivo en base64, se sube primero a Google Drive. Si falla, se detiene inmediatamente con error.
-// 2. Se escribe en la hoja de Google Sheets vía Apps Script. Si falla, NO se marca la fila como REALIZADO.
-// 3. Solo cuando Apps Script confirma éxito, se actualiza el registro local a REALIZADO.
+// FLUJO OPTIMIZADO PARA SERVERLESS:
+// 1. Si hay archivo en base64, se sube primero a Supabase Storage y se obtiene la URL HTTPS pública permanente.
+// 2. Se actualiza inmediatamente la base de datos (Supabase Postgres + memoria), marcando el estado REALIZADO.
+// 3. Sincronización con Google Sheets vía Apps Script con timeout corto (8s) en segundo plano (mejor esfuerzo).
 app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close", "/close"], async (req, res) => {
   const {
     userEmail,
@@ -974,7 +995,17 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
     updatedNovedad = `${record.novedad} [Nota de Cierre / Corrección: ${String(notaCorreccion).trim()}]`;
   }
 
-  // Sincronizar cierre en tiempo real con Google Sheets mediante Google Apps Script PRIMERO
+  // 1. Actualizar inmediatamente el registro en memoria y en Supabase Postgres (fuente de verdad duradera)
+  record.novedad = updatedNovedad;
+  record.evidenciaCorregida = finalEvidencia;
+  record.estado = "REALIZADO";
+  record.cerradoPor = String(userEmail).trim().toLowerCase();
+  record.cerradoFecha = new Date().toISOString();
+
+  records[index] = record;
+  saveSafetyRecords(records);
+
+  // 2. Sincronizar cierre con Google Sheets mediante Google Apps Script (con timeout de 8s, mejor esfuerzo)
   console.log(`[SAFETY CLOSE] Sincronizando cierre en Google Sheets para fila #${record.fila} (${record.placa})...`);
   let sheetSyncResult: any = null;
   try {
@@ -987,33 +1018,11 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
       novedad: updatedNovedad,
       evidenciaCorregida: finalEvidencia,
       notaCorreccion: String(notaCorreccion || "").trim()
-    });
+    }, 8000);
   } catch (syncErr: any) {
-    console.error("[SAFETY] Error sincronizando cierre con Google Sheets:", syncErr);
+    console.warn("[SAFETY] Aviso sincronizando cierre con Google Sheets (no bloqueante):", syncErr?.message);
     sheetSyncResult = { success: false, error: syncErr?.message };
   }
-
-  // Si falló la escritura en Google Sheets, NO marcar como REALIZADO
-  if (!sheetSyncResult?.success) {
-    const sheetErrMsg = sheetSyncResult?.error || sheetSyncResult?.result?.message || "Fallo en Google Apps Script";
-    console.error("[SAFETY CLOSE SHEET ERROR]:", sheetErrMsg);
-    return res.status(502).json({
-      success: false,
-      message: `La evidencia se subió a Drive (${finalEvidencia}), pero falló al escribir el cierre en la hoja de Google Sheets: ${sheetErrMsg}. La novedad NO fue marcada como REALIZADO. Intente de nuevo.`,
-      driveUrl: finalEvidencia,
-      errorDetails: sheetErrMsg
-    });
-  }
-
-  // Solo cuando Google Sheets confirmó la escritura, se actualiza el registro local
-  record.novedad = updatedNovedad;
-  record.evidenciaCorregida = finalEvidencia;
-  record.estado = "REALIZADO";
-  record.cerradoPor = String(userEmail).trim().toLowerCase();
-  record.cerradoFecha = new Date().toISOString();
-
-  records[index] = record;
-  saveSafetyRecords(records);
 
   return res.json({
     success: true,
@@ -1027,16 +1036,18 @@ app.post(["/api/safety-novedades/close", "/safety-novedades/close", "/api/close"
       evidenciaCorregida: record.evidenciaCorregida,
       estado: record.estado
     },
-    message: `Cierre exitoso: Actualizado a REALIZADO tanto en el sistema como en la hoja Google Sheets (fila ${record.fila}). Evidencia guardada en Drive.`
+    message: sheetSyncResult?.success
+      ? `Cierre exitoso: Actualizado a REALIZADO en Supabase y sincronizado en Google Sheets (fila ${record.fila}).`
+      : `Cierre exitoso: Actualizado a REALIZADO en Supabase (fila ${record.fila}). ${sheetSyncResult?.error ? `(Sincronización Sheets pendiente: ${sheetSyncResult.error})` : ''}`
   });
 });
 
+
 // 4.1. AJUSTE: Carga de evidencia pendiente por fila independiente (Reporte o Corrección)
-// ORDEN DE EJECUCIÓN ESTRICTO:
-// 1. Si hay archivo en base64, se sube primero a Google Drive y se obtiene la URL real confirmada.
-// 2. Si falla Drive, se detiene y devuelve error 502 sin tocar la fila.
-// 3. Se escribe el link en la celda de la hoja vía Apps Script. Si falla la hoja, se detiene y no se modifica la fila.
-// 4. Solo cuando la hoja confirma la escritura, se actualiza el registro local.
+// FLUJO OPTIMIZADO PARA SERVERLESS:
+// 1. Si hay archivo en base64, se sube primero a Supabase Storage y se obtiene la URL HTTPS pública permanente.
+// 2. Se actualiza inmediatamente la base de datos (Supabase Postgres + memoria), garantizando la respuesta rápida.
+// 3. Sincronización con Google Sheets vía Apps Script con timeout corto (8s) en segundo plano (mejor esfuerzo).
 app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evidence", "/api/update-evidence", "/update-evidence"], async (req, res) => {
   const {
     userEmail,
@@ -1139,49 +1150,7 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
     });
   }
 
-  // Escribir el link confirmado en Google Sheets mediante Google Apps Script PRIMERO
-  console.log(`[SAFETY UPDATE EVIDENCE] Escribiendo link en Google Sheets para fila #${record.fila} (${record.placa})...`);
-  let sheetSyncResult: any = null;
-  try {
-    sheetSyncResult = await syncToGoogleAppsScript({
-      action: "update_evidence",
-      userEmail: effectiveEmail,
-      fila: record.fila,
-      placa: record.placa,
-      type: normalizedType,
-      columnIndex: normalizedType === "reporte" ? 4 : 5,
-      evidenciaUrl: finalDriveUrl
-    });
-
-    // Si la versión actual de Google Apps Script requiere fallback para corregida:
-    if (!sheetSyncResult?.success && normalizedType === "corregida") {
-      sheetSyncResult = await syncToGoogleAppsScript({
-        action: "close",
-        userEmail: effectiveEmail,
-        id: record.id,
-        fila: record.fila,
-        placa: record.placa,
-        evidenciaCorregida: finalDriveUrl
-      });
-    }
-  } catch (syncErr: any) {
-    console.error("[SAFETY] Error sincronizando evidencia con Google Sheets:", syncErr);
-    sheetSyncResult = { success: false, error: syncErr?.message };
-  }
-
-  // Si falló la escritura en Google Sheets, NO marcar ni actualizar la fila localmente
-  if (!sheetSyncResult?.success) {
-    const sheetErrMsg = sheetSyncResult?.error || sheetSyncResult?.result?.message || "Fallo en Google Apps Script";
-    console.error("[SAFETY UPDATE EVIDENCE SHEET ERROR]:", sheetErrMsg);
-    return res.status(502).json({
-      success: false,
-      message: `El archivo se subió exitosamente a Google Drive (${finalDriveUrl}), pero falló al escribir el enlace en la hoja de Google Sheets: ${sheetErrMsg}. La fila #${record.fila} no fue modificada. Intente de nuevo.`,
-      driveUrl: finalDriveUrl,
-      errorDetails: sheetErrMsg
-    });
-  }
-
-  // Solo cuando Google Sheets confirma la escritura exitosa, actualizamos la base local
+  // 1. Guardar y actualizar inmediatamente en Supabase Postgres y memoria local (fuente de verdad)
   if (normalizedType === "reporte") {
     record.evidenciaReporte = finalDriveUrl;
   } else {
@@ -1196,6 +1165,37 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
   records[index] = record;
   saveSafetyRecords(records);
 
+  // 2. Sincronización en segundo plano con Google Sheets (mejor esfuerzo, con timeout de 8s)
+  // No bloquea ni tumba la respuesta al usuario si Google Apps Script falla o tarda
+  console.log(`[SAFETY UPDATE EVIDENCE] Sincronizando con Google Sheets para fila #${record.fila} (${record.placa})...`);
+  let sheetSyncResult: any = null;
+  try {
+    sheetSyncResult = await syncToGoogleAppsScript({
+      action: "update_evidence",
+      userEmail: effectiveEmail,
+      fila: record.fila,
+      placa: record.placa,
+      type: normalizedType,
+      columnIndex: normalizedType === "reporte" ? 4 : 5,
+      evidenciaUrl: finalDriveUrl
+    }, 8000);
+
+    // Fallback para corregida si Apps Script tiene versión previa
+    if (!sheetSyncResult?.success && normalizedType === "corregida") {
+      sheetSyncResult = await syncToGoogleAppsScript({
+        action: "close",
+        userEmail: effectiveEmail,
+        id: record.id,
+        fila: record.fila,
+        placa: record.placa,
+        evidenciaCorregida: finalDriveUrl
+      }, 8000);
+    }
+  } catch (syncErr: any) {
+    console.warn("[SAFETY] Aviso sincronizando evidencia con Google Sheets (no bloqueante):", syncErr?.message);
+    sheetSyncResult = { success: false, error: syncErr?.message };
+  }
+
   const colLabel = normalizedType === "reporte" ? "EVIDENCIA DEL REPORTE" : "EVIDENCIA CORREGIDA";
   return res.json({
     success: true,
@@ -1204,9 +1204,12 @@ app.post(["/api/safety-novedades/update-evidence", "/safety-novedades/update-evi
     url: finalDriveUrl,
     evidenceUrl: finalDriveUrl,
     sheetSync: sheetSyncResult,
-    message: `${colLabel} guardada en Google Drive y escrita exitosamente en la fila #${record.fila} (${record.placa}) de Google Sheets.`
+    message: sheetSyncResult?.success
+      ? `${colLabel} guardada en Supabase y sincronizada en Google Sheets (fila #${record.fila}).`
+      : `${colLabel} guardada exitosamente en Supabase (fila #${record.fila}). ${sheetSyncResult?.error ? `(Sincronización Sheets pendiente: ${sheetSyncResult.error})` : ''}`
   });
 });
+
 
 // 5. Exportar a CSV con el formato exacto de las 6 columnas de Google Sheets
 app.get(["/api/safety-novedades/export-csv", "/safety-novedades/export-csv", "/api/export-csv", "/export-csv"], async (_req, res) => {
@@ -1334,11 +1337,15 @@ app.post(["/api/safety-novedades/test-webhook", "/safety-novedades/test-webhook"
 
   const startTime = Date.now();
   try {
-    // 1. Test GET (Estado general y Spreadsheet)
+    // 1. Test GET (Estado general y Spreadsheet) con timeout de 6s
+    const getController = new AbortController();
+    const getTimer = setTimeout(() => getController.abort(), 6000);
     const fetchRes = await fetch(targetUrl, {
       method: "GET",
-      redirect: "follow"
+      redirect: "follow",
+      signal: getController.signal
     });
+    clearTimeout(getTimer);
     const duration = Date.now() - startTime;
     const text = await fetchRes.text();
     const trimmed = text.trim();
@@ -1379,15 +1386,19 @@ app.post(["/api/safety-novedades/test-webhook", "/safety-novedades/test-webhook"
       });
     }
 
-    // 2. Test POST con action "test_drive" para verificar permisos explícitos de Google Drive
+    // 2. Test POST con action "test_drive" para diagnóstico informativo (timeout 5s)
     let driveDiagnostic: any = null;
     try {
+      const postController = new AbortController();
+      const postTimer = setTimeout(() => postController.abort(), 5000);
       const driveTestRes = await fetch(targetUrl, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
         body: JSON.stringify({ action: "test_drive" }),
-        redirect: "follow"
+        redirect: "follow",
+        signal: postController.signal
       });
+      clearTimeout(postTimer);
       const driveText = await driveTestRes.text();
       try {
         driveDiagnostic = JSON.parse(driveText);
