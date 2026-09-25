@@ -1,6 +1,12 @@
 {
   "version": 2,
   "cleanUrls": true,
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node",
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     {
       "source": "/api/(.*)",
@@ -16,3 +22,4 @@
     }
   ]
 }
+

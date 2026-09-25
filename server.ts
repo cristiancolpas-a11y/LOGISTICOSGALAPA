@@ -17,20 +17,22 @@ app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Normalizador de rutas para Vercel Serverless:
-// Asegura que las solicitudes a /api/... mantengan el prefijo esperado en Vercel
-if (process.env.VERCEL) {
-  app.use((req, _res, next) => {
-    const matchedPath = (req.headers["x-matched-path"] as string) ||
-                        (req.headers["x-vercel-matched-path"] as string) ||
-                        (req.headers["x-forwarded-uri"] as string) ||
-                        (req.headers["x-original-uri"] as string);
+// En Vercel, la función serverless en api/index.ts puede recibir peticiones donde
+// req.url es "/health", "/api/health", "/", etc., según la regla de reescritura.
+// Este middleware garantiza que req.url refleje el path exacto de la petición original.
+app.use((req, _res, next) => {
+  const matchedPath =
+    (req.headers["x-matched-path"] as string) ||
+    (req.headers["x-vercel-matched-path"] as string) ||
+    (req.headers["x-forwarded-uri"] as string) ||
+    (req.headers["x-original-uri"] as string);
 
-    if (matchedPath && matchedPath.startsWith("/api") && req.url === "/api") {
-      req.url = matchedPath;
-    }
-    next();
-  });
-}
+  if (matchedPath && matchedPath.startsWith("/api") && req.url === "/api") {
+    req.url = matchedPath;
+  }
+  next();
+});
+
 
 
 // ============================================================
@@ -280,7 +282,7 @@ function fetchSheetCsv(sheetName: string = "Check list"): Promise<string> {
   });
 }
 
-// API Routes & Health Check (compatible con /api, /api/health y /health en Vercel)
+// API Routes & Health Check (compatible con /api, /api/health, /health y / en la función serverless)
 app.get(["/api", "/api/health", "/health"], (_req, res) => {
   res.json({
     status: "ok",
@@ -289,6 +291,7 @@ app.get(["/api", "/api/health", "/health"], (_req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
 
 // Authentication endpoint - Valida credenciales contra variables de entorno USER_1..3
 app.post(["/api/auth/login", "/auth/login"], (req, res) => {
