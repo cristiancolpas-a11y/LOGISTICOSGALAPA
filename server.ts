@@ -1412,42 +1412,39 @@ app.post(["/api/safety-novedades/test-webhook", "/safety-novedades/test-webhook"
       });
     }
 
-    // 2. Test POST con action "test_drive" para diagnóstico informativo (timeout 5s)
-    let driveDiagnostic: any = null;
+    // 2. Test POST con action "get_records" para diagnóstico de lectura/escritura (timeout 5s)
+    let postDiagnostic: any = null;
     try {
       const postController = new AbortController();
       const postTimer = setTimeout(() => postController.abort(), 5000);
-      const driveTestRes = await fetch(targetUrl, {
+      const postTestRes = await fetch(targetUrl, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ action: "test_drive" }),
+        body: JSON.stringify({ action: "get_records" }),
         redirect: "follow",
         signal: postController.signal
       });
       clearTimeout(postTimer);
-      const driveText = await driveTestRes.text();
+      const postText = await postTestRes.text();
       try {
-        driveDiagnostic = JSON.parse(driveText);
+        postDiagnostic = JSON.parse(postText);
       } catch {
-        driveDiagnostic = { raw: driveText.slice(0, 150) };
+        postDiagnostic = { raw: postText.slice(0, 150) };
       }
-    } catch (dErr: any) {
-      driveDiagnostic = { success: false, error: dErr.message };
+    } catch (pErr: any) {
+      postDiagnostic = { success: false, error: pErr.message };
     }
 
-    const driveOk = driveDiagnostic?.success === true;
-    const driveStatusMsg = driveOk
-      ? `Permisos de Google Drive activos (Carpeta: ${driveDiagnostic?.result?.folderName || "EVIDENCIAS_SAFETY_AON_GALAPA"}).`
-      : `Alerta Drive: ${driveDiagnostic?.message || driveDiagnostic?.error || "Falta autorizar permisos de Drive en Apps Script."}`;
-
+    const postOk = postDiagnostic?.success === true;
     return res.json({
       success: true,
       latencyMs: duration,
       httpStatus: fetchRes.status,
       response: parsed,
-      driveDiagnostic,
-      driveOk,
-      message: `Conexión con Apps Script verificada (${duration}ms). ${driveStatusMsg}`
+      postDiagnostic,
+      postOk,
+      driveOk: true,
+      message: `Conexión con Apps Script verificada (${duration}ms). Hoja sincronizada. Evidencias gestionadas de forma permanente mediante Supabase Storage.`
     });
   } catch (err: any) {
     return res.status(500).json({

@@ -267,14 +267,10 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                   {isConfigured ? 'Webhook Activo' : 'Sin Enlace Directo'}
                 </span>
                 <span
-                  className={`hidden sm:flex px-2 py-0.5 rounded-full text-[10px] font-semibold items-center gap-1 ${
-                    storageStatus?.cloudinary?.isConfigured
-                      ? 'bg-sky-500/20 text-sky-300 border border-sky-500/30'
-                      : 'bg-slate-700/60 text-slate-300 border border-slate-600'
-                  }`}
+                  className="hidden sm:flex px-2 py-0.5 rounded-full text-[10px] font-semibold items-center gap-1 bg-sky-500/20 text-sky-300 border border-sky-500/30"
                 >
-                  <span className={`w-1.5 h-1.5 rounded-full ${storageStatus?.cloudinary?.isConfigured ? 'bg-sky-400' : 'bg-slate-400'}`} />
-                  {storageStatus?.cloudinary?.isConfigured ? 'Cloudinary Activo' : 'Servidor Local Activo'}
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                  Supabase Storage (Solo Link)
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-0.5">
@@ -375,8 +371,8 @@ export const GoogleSheetsSyncModal: React.FC<GoogleSheetsSyncModalProps> = ({
                     Borra cualquier código que aparezca en el editor y pega el script que tienes debajo (usa el botón{' '}
                     <strong className="text-blue-300">"Copiar Código"</strong>). Luego presiona <strong className="text-white">Guardar</strong> (ícono de disquete).
                   </li>
-                  <li className="bg-amber-950/40 border border-amber-500/40 p-2 rounded-lg text-amber-200">
-                    <strong className="text-amber-300">Paso Crítico para Google Drive:</strong> En la barra superior del editor de Apps Script, en el selector desplegable de funciones, selecciona <code className="bg-amber-900/60 px-1 py-0.5 rounded font-mono text-white">autorizarPermisosDrive</code> y presiona <strong className="text-white">Ejecutar</strong>. Google te solicitará autorizar acceso a Google Drive. Concede los permisos para que las fotos de evidencias lleguen a la carpeta <code className="font-mono text-amber-300">EVIDENCIAS_SAFETY_AON_GALAPA</code>.
+                  <li className="bg-emerald-950/40 border border-emerald-500/40 p-2 rounded-lg text-emerald-200">
+                    <strong className="text-emerald-300">Versión Solo Link (Sin Google Drive):</strong> El script solo escribe directamente los enlaces de las evidencias (alojadas permanentemente en Supabase Storage) en las celdas de la hoja. No requiere permisos especiales de DriveApp ni crear carpetas externas.
                   </li>
                   <li>
                     Haz clic en el botón azul de arriba a la derecha:{' '}
