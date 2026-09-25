@@ -3,8 +3,8 @@ import path from "path";
 import https from "https";
 import dotenv from "dotenv";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
-import { GOOGLE_APPS_SCRIPT_CODE } from "./src/data/googleAppsScriptCode";
-import { FALLBACK_SAFETY_RECORDS } from "./src/data/fallbackSafetyData";
+import { GOOGLE_APPS_SCRIPT_CODE } from "./src/data/googleAppsScriptCode.js";
+import { FALLBACK_SAFETY_RECORDS } from "./src/data/fallbackSafetyData.js";
 
 dotenv.config();
 

@@ -1,4 +1,4 @@
-import { SafetyNovedadRecord } from "../types";
+import { SafetyNovedadRecord } from "../types.js";
 
 export const FALLBACK_SAFETY_RECORDS: SafetyNovedadRecord[] = [
   {
