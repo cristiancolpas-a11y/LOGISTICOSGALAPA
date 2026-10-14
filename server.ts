@@ -47,6 +47,27 @@ app.use((req, _res, next) => {
 // - SUPABASE_SERVICE_ROLE_KEY (clave de servicio secreta, NUNCA expuesta al cliente)
 // ============================================================
 
+// NoOp WebSocket para evitar que Supabase intente abrir WebSockets o lance:
+// "Error: Node.js detected but native WebSocket not found" en entornos serverless / Node
+class NoOpWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+  readonly readyState = 3; // CLOSED
+  readonly url = "";
+  readonly protocol = "";
+  close() {}
+  send() {}
+  addEventListener() {}
+  removeEventListener() {}
+}
+
+// Polyfill defensivo para globalThis.WebSocket en caso de que el runtime carezca de WebSocket nativo
+if (typeof globalThis !== "undefined" && !(globalThis as any).WebSocket) {
+  (globalThis as any).WebSocket = NoOpWebSocket;
+}
+
 let supabaseClient: SupabaseClient | null = null;
 
 export function getSupabase(): SupabaseClient | null {
@@ -59,7 +80,15 @@ export function getSupabase(): SupabaseClient | null {
 
   if (!supabaseClient) {
     supabaseClient = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false }
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false
+      },
+      realtime: {
+        // Desactivar Realtime: proveer transporte NoOp para que jamás intente inicializar WebSocket
+        transport: NoOpWebSocket as any
+      }
     });
   }
   return supabaseClient;
